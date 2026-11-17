@@ -76,6 +76,9 @@ Kernel compilation alone does not establish strict confinement. Install compatib
 ```console
 cat /sys/kernel/security/lsm
 cat /sys/kernel/security/lockdown
+# SELinux flavor:
+getenforce
+# AppArmor flavor:
 aa-status
 snap debug sandbox-features
 snap info SNAP_NAME
@@ -130,6 +133,15 @@ Builds use Linux tag `v7.4-rc3` at commit `aebb7274476403040d582c61478df8f4a7bf9
 ```console
 env PATH="/tmp/ekuos-build-tools/usr/bin:$PATH" LD_LIBRARY_PATH=/tmp/ekuos-build-tools/usr/lib64 BISON_PKGDATADIR=/tmp/ekuos-build-tools/usr/share/bison PKG_CONFIG_PATH=/tmp/ekuos-build-tools/usr/lib64/pkgconfig dart run build.dart --tag v7.4-rc3 --arch x86_64
 ```
+
+Both real builds completed successfully on November 17, 2026, using 10 detected processors for each flavor, in about 435 seconds total:
+
+| Kernel release | Verified overrides | Exported artifacts | Verified module signatures | Default lockdown |
+| --- | ---: | ---: | ---: | --- |
+| `7.4.0-rc3-eku-se` | 112 | 22 | 12 | confidentiality |
+| `7.4.0-rc3-eku-aa` | 135 | 22 | 12 | confidentiality |
+
+The fixture suite passed all 20 tests. Both ELF images contain kCFI/IBT sections, and OpenSSL verified every exported module signature against its corresponding kernel's public certificate. The local build log is `build/dual-build.log`.
 
 The environment overrides are unnecessary when dependencies are installed in system paths. Compile-time and artifact verification do not test boot behavior, loaded policies, or snap confinement on a running system.
 

@@ -66,7 +66,7 @@ Future<void> main(List<String> args) async {
   }
   final build = args[0];
   final out = args.length > 1 ? args[1] : 'out';
-  final profile = args.length > 2 ? args[2] : 'eku.conf';
+  final profile = args.length > 2 ? args[2] : '$out/build-profile.conf';
   final temporary = await Directory.systemTemp.createTemp('ekuos-verify-');
   try {
     final expected = await builder.readOverrides(
@@ -98,6 +98,12 @@ Future<void> main(List<String> args) async {
     );
     final flavor = metadata['flavor'];
     if (flavor == 'se' || flavor == 'aa') {
+      check(
+        (await File(
+          '$out/kernel.release',
+        ).readAsString()).trim().endsWith('-eku-$flavor'),
+        'Kernel release does not match flavor $flavor',
+      );
       final lsm = (jsonDecode(actual['CONFIG_LSM']!) as String).split(',');
       check(
         actual['CONFIG_LOCALVERSION'] == '"-eku-$flavor"' &&
