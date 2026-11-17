@@ -1,121 +1,138 @@
 # ekuOS kernel builder
 
-Build a Linux kernel using Dart as a scripting language. The script clones the source, applies patches, merges text-based overrides into the default configuration, and compiles the kernel. It needs no pub packages or Bash/Python helper scripts. External commands are launched directly with argument lists.
+Build hardened Linux kernels using Dart as a scripting language. One command clones the source if needed, applies patches once, and builds two independent kernels:
+
+| Flavor | Active major LSM | Kernel suffix | Build directory | Artifact directory |
+| --- | --- | --- | --- | --- |
+| `linux-eku-se` | SELinux | `-eku-se` | `build/linux-eku-se/` | `out/linux-eku-se/` |
+| `linux-eku-aa` | AppArmor | `-eku-aa` | `build/linux-eku-aa/` | `out/linux-eku-aa/` |
+
+Both kernels default to **confidentiality lockdown**. SELinux remains the primary system option; the AppArmor kernel provides a separate boot option for snap confinement. The builder does not install kernels or change the bootloader.
 
 ## Requirements
 
-- Dart SDK 3.0 or later
-- Git, GNU make, GNU patch, a compiler, and the dependencies required to build your kernel
-- Network access for cloning, or an existing Linux source tree
-- A suitable toolchain for cross compilation, if needed
+- Dart SDK 3.0 or later; no pub packages or Bash/Python helper scripts are needed.
+- Git, GNU make, GNU patch, Clang 22 or later, LLD, LLVM utilities, flex, bison, bc, OpenSSL development headers, and libelf development headers.
+- An x86_64 Linux source tree compatible with the supplied Linux 7.4 profiles, or network access to clone it.
+
+External commands are launched directly with argument lists. The kernel's own build system and native signing utility are used for compilation and module signing.
 
 ## Usage
 
 ```console
 dart run build.dart
-```
-
-By default, the script shallow-clones the default branch HEAD of the official Torvalds Linux repository into `linux/`, reads `config.txt` and `patches/`, and writes configuration and build artifacts to `build/`. The default revision is the latest upstream development code at clone time. To build a release, specify its exact tag with `--tag`.
-
-After a successful build, artifacts are copied to `out/` (override with `--artifacts PATH`). This includes the kernel image (for example, `out/bzImage`), `vmlinux`, `System.map`, the resolved `.config`, module metadata, and the modules listed in `modules.order`, preserving their paths under `out/modules/`. `build-profile.conf` records the input profile, and `build-info.json` records the source revision, toolchain, parallelism, and exported file sizes. Files with matching names are overwritten; unrelated files from earlier exports are left in place. The artifact directory must not overlap the source or build directory. Artifacts are exported only after configuration verification and compilation succeed.
-
-When `CONFIG_MODULE_SIG_ALL` or `CONFIG_MODULE_SIG_FORCE` is enabled, exported module copies are signed using Kbuild's native `scripts/sign-file` executable and the configured file-based signing key. The generated public certificate is exported as `out/signing_key.x509`; the private key remains in the build directory. The modules under `out/modules/` are an artifact bundle, not a populated `/lib/modules/<release>` installation.
-
-All relative paths are resolved against the current directory. Source and output paths must not contain spaces or shell metacharacters.
-
-```console
-dart run build.dart --tag v6.12 --source linux-v6.12 --output build-v6.12
-dart run build.dart --source /path/to/linux --config config.txt --patches patches --output build --jobs 8
-dart run build.dart --source /path/to/linux --arch arm64 --cross-compile aarch64-linux-gnu- --defconfig defconfig --target Image --target modules
+dart run build.dart --tag v7.4-rc3 --arch x86_64
+dart run build.dart --flavor se
+dart run build.dart --flavor aa
 dart run build.dart --help
 ```
 
-The tag above illustrates the syntax; choose the release you want to build. `--tag` accepts a tag name, not a branch name. `--repo URL` selects another Git repository, such as a stable kernel mirror or a local repository.
+The default `--flavor both` builds SELinux first, then AppArmor, using all processors detected by Dart for each build. `--jobs NUMBER` overrides that count. The two builds run sequentially to avoid multiplying CPU and memory demand. Each has a separate configuration, kernel release, module signing key, and artifact bundle.
 
-A missing or empty source directory is cloned automatically using `git clone --depth 1 --single-branch`; with `--tag`, the clone also uses `--branch TAG`. Existing source trees are reused without fetching, pulling, resetting, or switching revisions. When `--tag` is supplied for an existing tree, its local tag must resolve to the current HEAD; otherwise the build stops. Use a new source directory to build a different tag or obtain a fresh upstream HEAD.
+`--config` selects the common profile (default: `eku.conf`). The built-in flavor profile is merged afterward and takes precedence:
 
-## ekuOS hardening profile
+- `profiles/linux-eku-se.conf`: enforcing SELinux, with AppArmor disabled.
+- `profiles/linux-eku-aa.conf`: AppArmor, with SELinux disabled, plus snap-related kernel features.
+
+Flavor profile paths are resolved relative to `build.dart`. Other relative paths are resolved against the current directory. `--output` and `--artifacts` select the parent directories of the flavor directories. Source and build paths must not contain spaces or shell metacharacters.
 
 ```console
-dart run build.dart --config eku.conf --arch x86_64
+dart run build.dart --source linux --config eku.conf --output build --artifacts out --jobs 8
 ```
 
-`eku.conf` selects Clang/LLVM with `LLVM=1`, which the builder passes to every make invocation rather than adding it to `.config`. You can also select this toolchain with `--llvm`. Install Clang, LLD, and LLVM utilities, plus the usual kernel build dependencies such as flex, bison, bc, OpenSSL development headers, and libelf development headers.
+For the original single generic build behavior, use `--flavor custom`. It adds no flavor profile or directory suffix and supports other architectures with a suitable configuration:
 
-The profile targets Linux 7.4 on x86_64 and enables enforced kCFI, x86 kernel IBT, CPU mitigations, KASLR and stack-offset randomization, strong stack protection, strict memory permissions, fortified copies, hardened slab allocation without default slab merging, zero initialization, list corruption checks, enforced module signatures, seccomp, Landlock, Yama, SafeSetID, SELinux, and integrity lockdown. On this kernel, kCFI uses `CONFIG_CFI` (the previous `CONFIG_CFI_CLANG` is transitional); it does not require LTO. `CONFIG_CFI_AUTO_DEFAULT=n` selects kCFI at boot rather than automatic FineIBT selection. Every override must survive Kconfig dependency resolution before compilation begins. Other kernel versions may require different symbol names.
+```console
+dart run build.dart --flavor custom --config config.txt --source /path/to/linux
+dart run build.dart --flavor custom --config config.txt --arch arm64 --llvm --target Image --target modules
+```
 
-Parallelism defaults to Dart's detected processor count. Omit `--jobs` to use all detected CPUs; supply it only to override that default.
+## Source and patches
 
-These choices have runtime effects: zeroing memory on free adds overhead, lockdown restricts privileged kernel access, and disabling hibernation, kexec, `/dev/mem`, and legacy TIOCSTI removes those interfaces. SELinux requires an appropriate userspace policy for a complete system. This profile builds a kernel; it does not install it, configure a bootloader, or test boot/runtime behavior.
+A missing or empty source directory is shallow-cloned from the official Torvalds Linux repository using `git clone --depth 1 --single-branch`. Without `--tag`, the clone uses upstream default branch HEAD. `--tag TAG` selects an exact tag; branch names are rejected as tag selections. `--repo URL` selects a mirror or a local repository.
 
-See the upstream documentation on [Clang/LLVM builds](https://docs.kernel.org/kbuild/llvm.html) and [kernel self-protection](https://docs.kernel.org/security/self-protection.html).
+Existing source trees are reused without fetching, pulling, resetting, or switching revisions. With `--tag`, the existing local tag must resolve to HEAD. Use a new source directory to change revisions or obtain a fresh upstream HEAD.
 
-## Configuration file
+Files ending in `.patch` or `.diff` directly inside `patches/` are applied in filename order before either flavor builds. Use names such as `001-name.patch` with `a/` and `b/` paths for `patch -p1`. Each patch is dry-run first, and a successful reverse dry run identifies an already applied patch. Later patches that change the same lines can prevent this detection. Applied patches remain in the source tree if a later step fails.
 
-Write one `HOGE=value` or `CONFIG_HOGE=value` entry per line in `config.txt`. Use Kconfig value syntax: quote strings and use `n` to disable an option.
+## Hardening and LSM selection
+
+The shared profile enables Clang/LLVM, enforced kCFI, x86 IBT, CPU mitigations, ASLR with increased mmap entropy, stack-offset randomization, strong stack protection, strict memory permissions, fortified copies, hardened usercopy, slab freelist protection, type-partitioned allocation caches, zero initialization, syscall stack erasure, enforced page-table checks, list corruption checks, and signed-module enforcement.
+
+`LLVM=1` is a build setting, passed to every make invocation. `--llvm` also selects it. Linux 7.4 uses `CONFIG_CFI`; the older `CONFIG_CFI_CLANG` is transitional. kCFI does not require LTO. `CONFIG_CFI_AUTO_DEFAULT=n` selects kCFI instead of automatic FineIBT selection at boot.
+
+Both profiles force `CONFIG_LOCK_DOWN_KERNEL_FORCE_CONFIDENTIALITY=y`, with the `NONE` and `INTEGRITY` choices disabled. Confidentiality mode includes integrity restrictions and additionally restricts interfaces exposing kernel secrets. Some debugging, tracing, and performance-monitoring operations will be unavailable. Other tradeoffs include memory-zeroing and checking overhead, disabled hibernation/kexec/`/dev/mem`, and no legacy vsyscall mapping.
+
+In the SELinux flavor, development/permissive support and the `selinux=0` boot parameter are disabled. A labeled filesystem and an appropriate enforcing userspace policy are required. The AppArmor flavor enables policy verification and introspection, but its userspace policies must still be installed and loaded.
+
+The Linux 7.4-rc3 sources mark both SELinux and AppArmor with `LSM_FLAG_EXCLUSIVE`. They cannot be active together on this kernel; listing both in `CONFIG_LSM` does not provide simultaneous enforcement. Each flavor selects exactly one major LSM while retaining Landlock, Yama, SafeSetID, and lockdown. See the upstream [LSM documentation](https://docs.kernel.org/admin-guide/LSM/index.html), [Clang build documentation](https://docs.kernel.org/kbuild/llvm.html), and [kernel self-protection documentation](https://docs.kernel.org/security/self-protection.html).
+
+## Snap confinement
+
+Use the **AppArmor flavor** for snap's AppArmor-based sandbox. It includes SquashFS with common compression formats, loop devices, securityfs, audit, namespaces including user namespaces, seccomp, memory cgroups, process limits, and device cgroups.
+
+Kernel compilation alone does not establish strict confinement. Install compatible AppArmor userspace tooling, snapd, and its generated policies, and check the running system after boot:
+
+```console
+cat /sys/kernel/security/lsm
+cat /sys/kernel/security/lockdown
+aa-status
+snap debug sandbox-features
+snap info SNAP_NAME
+```
+
+The active LSM list should include `apparmor` for the AppArmor flavor, or `selinux` for the SELinux flavor; lockdown should show `[confidentiality]`. Confirm snapd's reported sandbox features and the snap's confinement mode. Classic and devmode snaps do not provide strict confinement. See the official [snap confinement documentation](https://snapcraft.io/docs/explanation/security/snap-confinement/) and [security policies](https://snapcraft.io/docs/explanation/security/security-policies/).
+
+The SELinux kernel does not provide an AppArmor sandbox for snaps. A container shares the host kernel and cannot activate AppArmor alongside an exclusive SELinux host. A separately booted kernel or VM is needed to use the AppArmor flavor while retaining a SELinux host.
+
+## Configuration syntax and build process
+
+Write one `HOGE=value` or `CONFIG_HOGE=value` per line. Strings must use Kconfig quotes; `n` disables an option. Blank lines and `#` comments are ignored, except `# CONFIG_... is not set`, which disables the symbol. The last assignment wins. Put comments on separate lines; inline comments are treated as part of the value.
 
 ```text
-LOCALVERSION="-ekuos"
-CONFIG_IKCONFIG=y
-CONFIG_IKCONFIG_PROC=y
-CONFIG_DEBUG_INFO=n
-# CONFIG_UNUSED_SYMBOL is not set
+LLVM=1
+CONFIG_LOCALVERSION="-eku"
+CONFIG_HARDENED_USERCOPY=y
+CONFIG_DEVMEM=n
 ```
 
-Blank lines and comments beginning with `#` are ignored, except for `# CONFIG_... is not set`, which disables that option. For duplicate keys, the last value wins. Put comments on separate lines; inline comments are treated as part of the value.
+Each flavor starts from `make O=... defconfig` (override with `--defconfig`), merges the common and flavor settings, and runs `olddefconfig`. Every requested value must survive dependency resolution; otherwise the build stops and reports the mismatch. Compilation then runs with the detected CPU count and optional repeated `--target` selections. Manual edits to generated `.config` files are discarded on the next run. Unset `KCONFIG_CONFIG` before running the builder.
 
-Each run performs these steps:
+## Artifacts and logs
 
-1. Stream the overrides file one line at a time.
-2. Clone the source if needed and verify the requested tag, if supplied.
-3. Apply `.patch` and `.diff` files directly inside `patches/` in filename order. Use names such as `001-name.patch` and `-p1` paths with `a/` and `b/` prefixes.
-4. Generate defaults with `make O=... defconfig`. Select a different initial target with `--defconfig`.
-5. Merge overrides into the generated `.config`, then resolve dependencies with `make olddefconfig`.
-6. Verify that the resolved settings match the requested values, then compile with `make -j...`.
+Each flavor exports `bzImage`, `vmlinux`, `System.map`, `.config`, module metadata, and the modules listed in `modules.order` under its own artifact directory. `build-profile.conf` contains the effective merged profile. `build-info.json` records the flavor, source revision, compiler, parallelism, signed module count, and file sizes.
 
-If missing dependencies, unknown symbols, or other Kconfig rules prevent an override from taking effect, the script reports the requested and resolved values and stops. Each run regenerates the configuration from defaults, so manual edits to `build/.config` are discarded. Unset the `KCONFIG_CONFIG` environment variable before running the script.
+When module signing is selected, copied modules are signed with Kbuild's native `scripts/sign-file`. `signing_key.x509` contains the public certificate; the private key remains in that flavor's build directory. `modules/` is an artifact bundle, not a populated `/lib/modules/<release>` installation. Each flavor's keys and modules belong to its own kernel.
 
-Patches modify the source tree directly. Each patch is checked with a dry run before application. If a reverse dry run succeeds, the patch is considered already applied and skipped. Later patches that change the same lines can prevent this detection, so use a fresh source tree when changing the patch series. If a run fails, patches applied earlier in that run remain in place.
+Artifacts are copied after successful configuration verification and compilation. Matching filenames are overwritten; unrelated files from older exports remain. Artifact directories must not overlap source/build directories. A completed first flavor remains available if the second flavor fails; the overall command exits with failure.
 
-Logs include elapsed seconds and stage labels. In a terminal, information is cyan, success is green, warnings are yellow, and errors are red. Command output is streamed in real time, and failures produce exit code 1. Colors are disabled when output is redirected, when `NO_COLOR` is set, or when `--no-color` is supplied.
+Logs show elapsed time, stage labels, and real-time command output. Information is cyan, success green, warnings yellow, and errors red. Colors are disabled for redirected output, `NO_COLOR`, or `--no-color`. Failures return exit code 1.
 
-## Development checks
+## Verification
 
 ```console
 dart format --output=none --set-exit-if-changed build.dart test/
 dart analyze build.dart test/
 dart run test/build_test.dart
-```
-
-Tests are written entirely in Dart. They create a small Makefile and C source in a temporary directory and exercise the build pipeline with real Git, make, patch, and a C compiler. Clone tests use a local Git repository with two tagged revisions and require no network access. Kconfig dependency resolution is simulated by a Dart fixture. These tests do not compile a complete Linux kernel.
-
-After building the real x86_64 kernel with `eku.conf`, run the optional integration verifier:
-
-```console
 dart run test/verify_kernel.dart
-dart run test/verify_kernel.dart build out eku.conf
 ```
 
-This check requires OpenSSL and GNU readelf. It verifies every profile override, artifact sizes and copied contents, the kCFI/IBT ELF sections, and the PKCS#7 signature of each exported module using the exported public certificate. It also confirms that the signed payload matches the original compiled module and that the private key was not exported.
+The fixture suite uses real Git, make, patch, and a C compiler in temporary directories; it simulates Kconfig with Dart and requires no network. It covers both-flavor isolation, per-flavor selection, configuration merging, artifact export, and failure propagation.
 
-## Verified kernel build
-
-On November 17, 2026, the following configuration completed a real kernel build:
-
-- Source tag: `v7.4-rc3`, commit `aebb7274476403040d582c61478df8f4a7bf9cd3`
-- Kernel release: `7.4.0-rc3-eku`, based on `x86_64_defconfig`
-- Compiler/linker: Clang 22.1.8 and LLD 22.1.8 on Fedora 44
-- Parallelism: 10 jobs, using Dart's default detected processor count
-- Results: all 91 Kconfig overrides verified, 22 exported artifacts, and 12 cryptographically verified module signatures
-
-The source was cloned from the Torvalds GitHub mirror. Missing build dependencies were downloaded as Fedora RPMs and extracted into `/tmp/ekuos-build-tools`, without a system-wide installation. The final build command in that environment was:
+The optional real-build verifier checks both default flavor directories. It requires OpenSSL and GNU readelf, verifies all effective profile values, default confidentiality lockdown, exclusive LSM selection, file sizes and copied contents, kCFI/IBT ELF sections, and every exported module's PKCS#7 signature against its flavor's public certificate. It confirms that module payloads match the original compiled modules and that private keys were not exported. For custom directories:
 
 ```console
-env PATH="/tmp/ekuos-build-tools/usr/bin:$PATH" LD_LIBRARY_PATH=/tmp/ekuos-build-tools/usr/lib64 BISON_PKGDATADIR=/tmp/ekuos-build-tools/usr/share/bison PKG_CONFIG_PATH=/tmp/ekuos-build-tools/usr/lib64/pkgconfig dart run build.dart --config eku.conf --tag v7.4-rc3 --arch x86_64
+dart run test/verify_kernel.dart build/linux-eku-se out/linux-eku-se out/linux-eku-se/build-profile.conf
 ```
 
-For a normal installation with all dependencies available in the system paths, the environment overrides are unnecessary. The generated image is `out/bzImage`; the final resolved configuration is `out/.config`, and build metadata is in `out/build-info.json`. The local build log is `build/build.log`. Compilation and artifact verification succeeded; boot and runtime behavior have not been tested.
+Builds use Linux tag `v7.4-rc3` at commit `aebb7274476403040d582c61478df8f4a7bf9cd3`, with Clang/LLD 22.1.8 on Fedora 44. Missing dependencies in this workspace were extracted from Fedora RPMs to `/tmp/ekuos-build-tools`. With those temporary tools, run:
+
+```console
+env PATH="/tmp/ekuos-build-tools/usr/bin:$PATH" LD_LIBRARY_PATH=/tmp/ekuos-build-tools/usr/lib64 BISON_PKGDATADIR=/tmp/ekuos-build-tools/usr/share/bison PKG_CONFIG_PATH=/tmp/ekuos-build-tools/usr/lib64/pkgconfig dart run build.dart --tag v7.4-rc3 --arch x86_64
+```
+
+The environment overrides are unnecessary when dependencies are installed in system paths. Compile-time and artifact verification do not test boot behavior, loaded policies, or snap confinement on a running system.
 
 ## License
 
-This build tooling is licensed under the [MIT License](LICENSE). Linux kernel sources and third-party patches retain their respective licenses.
+This build tooling is licensed under the [MIT License](LICENSE). Linux sources and third-party patches retain their respective licenses.
