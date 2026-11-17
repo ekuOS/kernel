@@ -109,6 +109,7 @@ Future<void> main(List<String> args) async {
           ['--source', 'x', '--jobs', '0'],
           ['--source', 'x', '--target', 'CC=anything'],
           ['--unknown'],
+          ['--flavor', 'invalid'],
         ]) {
           await rejects(() async {
             builder.Options.parse(args);
@@ -122,6 +123,11 @@ Future<void> main(List<String> args) async {
         check(
           builder.Options.parse([]).jobs == Platform.numberOfProcessors,
           'Default parallelism does not match the processor count',
+        );
+        check(
+          builder.Options.parse([]).flavor == 'both' &&
+              builder.Options.parse([]).config == 'eku.conf',
+          'Wrong flavor/profile defaults',
         );
       },
     );
@@ -165,6 +171,8 @@ fail:
       Platform.resolvedExecutable,
       [
         script,
+        '--flavor',
+        'custom',
         '--source',
         source.path,
         '--output',
@@ -311,6 +319,83 @@ fail:
         );
       },
     );
+    await test(
+      'both flavors use independent releases, configs, outputs and metadata',
+      () async {
+        final base = '${root.path}/dual-build';
+        final destination = '${root.path}/dual-export';
+        final result = await run([
+          '--flavor',
+          'both',
+          '--output',
+          base,
+          '--artifacts',
+          destination,
+        ]);
+        check(result.exitCode == 0, '${result.stdout}\n${result.stderr}');
+        for (final flavor in ['se', 'aa']) {
+          final package = 'linux-eku-$flavor';
+          final values = await builder.readOverrides(
+            File('$destination/$package/.config'),
+          );
+          check(
+            values['CONFIG_LOCALVERSION'] == '"-eku-$flavor"',
+            'Release names collide',
+          );
+          check(
+            values['CONFIG_SECURITY_SELINUX'] == (flavor == 'se' ? 'y' : 'n') &&
+                values['CONFIG_SECURITY_APPARMOR'] ==
+                    (flavor == 'aa' ? 'y' : 'n'),
+            'Exclusive LSM selection is incorrect',
+          );
+          final metadata = jsonDecode(
+            await File('$destination/$package/build-info.json').readAsString(),
+          ) as Map<String, dynamic>;
+          check(
+            metadata['flavor'] == flavor && metadata['package'] == package,
+            'Flavor metadata is missing',
+          );
+          final exportedProfile = await builder.readOverrides(
+            File('$destination/$package/build-profile.conf'),
+            buildVariables: {},
+          );
+          check(
+            exportedProfile['CONFIG_LOCALVERSION'] ==
+                values['CONFIG_LOCALVERSION'],
+            'Exported profile does not include flavor overrides',
+          );
+          check(
+            await File('$base/$package/vmlinux').exists() &&
+                await File('$destination/$package/vmlinux').exists(),
+            'Missing flavor image',
+          );
+        }
+        check(
+          'Generating defaults:'.allMatches(result.stdout.toString()).length ==
+                  2 &&
+              'Applied:'.allMatches(result.stdout.toString()).isEmpty,
+          'Unexpected flavor execution or repeated patch application',
+        );
+      },
+    );
+    await test('a selected flavor builds only that flavor', () async {
+      final base = '${root.path}/aa-only-build';
+      final destination = '${root.path}/aa-only-export';
+      final result = await run([
+        '--flavor',
+        'aa',
+        '--output',
+        base,
+        '--artifacts',
+        destination,
+      ]);
+      check(
+        result.exitCode == 0 &&
+            await File('$destination/linux-eku-aa/vmlinux').exists() &&
+            !await Directory('$destination/linux-eku-se').exists(),
+        '${result.stdout}\n${result.stderr}',
+      );
+    });
     await test('Kconfig mismatch stops before compilation', () async {
       await File('$output/kernel-demo').delete();
       await overrides.writeAsString('UNAVAILABLE=y\n');

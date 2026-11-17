@@ -47,6 +47,16 @@ Future<String> run(String command, List<String> args) async {
 /// Optional integration check against a real ekuOS kernel build.
 /// Requires OpenSSL and GNU readelf in PATH; performs no installation or boot.
 Future<void> main(List<String> args) async {
+  if (args.isEmpty) {
+    for (final flavor in ['se', 'aa']) {
+      await main([
+        'build/linux-eku-$flavor',
+        'out/linux-eku-$flavor',
+        'out/linux-eku-$flavor/build-profile.conf',
+      ]);
+    }
+    return;
+  }
   if (args.length > 3) {
     stderr.writeln(
       'Usage: dart run test/verify_kernel.dart [BUILD [OUT [PROFILE]]]',
@@ -54,7 +64,7 @@ Future<void> main(List<String> args) async {
     exitCode = 1;
     return;
   }
-  final build = args.isNotEmpty ? args[0] : 'build';
+  final build = args[0];
   final out = args.length > 1 ? args[1] : 'out';
   final profile = args.length > 2 ? args[2] : 'eku.conf';
   final temporary = await Directory.systemTemp.createTemp('ekuos-verify-');
@@ -81,6 +91,24 @@ Future<void> main(List<String> args) async {
     final metadata = jsonDecode(
       await File('$out/build-info.json').readAsString(),
     ) as Map<String, dynamic>;
+    check(
+      actual['CONFIG_LOCK_DOWN_KERNEL_FORCE_CONFIDENTIALITY'] == 'y' &&
+          actual['CONFIG_LOCK_DOWN_KERNEL_FORCE_INTEGRITY'] == 'n',
+      'Confidentiality lockdown is not the default',
+    );
+    final flavor = metadata['flavor'];
+    if (flavor == 'se' || flavor == 'aa') {
+      final lsm = (jsonDecode(actual['CONFIG_LSM']!) as String).split(',');
+      check(
+        actual['CONFIG_LOCALVERSION'] == '"-eku-$flavor"' &&
+            actual['CONFIG_SECURITY_SELINUX'] == (flavor == 'se' ? 'y' : 'n') &&
+            actual['CONFIG_SECURITY_APPARMOR'] ==
+                (flavor == 'aa' ? 'y' : 'n') &&
+            lsm.contains(flavor == 'se' ? 'selinux' : 'apparmor') &&
+            !lsm.contains(flavor == 'se' ? 'apparmor' : 'selinux'),
+        'Incorrect exclusive LSM selection for $flavor',
+      );
+    }
     final files = metadata['files'] as List<dynamic>;
     for (final entry in files.cast<Map<String, dynamic>>()) {
       final path = entry['path'] as String;
@@ -175,7 +203,7 @@ Future<void> main(List<String> args) async {
       'Signed module count mismatch',
     );
     stdout.writeln(
-      'Verified ${expected.length} overrides, ${files.length} artifacts, '
+      'Verified ${metadata['package'] ?? 'custom'}: ${expected.length} overrides, ${files.length} artifacts, '
       '$modules module signatures, and kernel kCFI/IBT sections '
       '(build used ${metadata['jobs']} parallel jobs).',
     );

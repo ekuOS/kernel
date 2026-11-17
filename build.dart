@@ -11,7 +11,8 @@ Usage: dart run build.dart [options]
   --source PATH        Source directory (default: linux; cloned if absent/empty)
   --tag TAG            Clone an exact tag; default: upstream default branch HEAD
   --repo URL           Git repository (default: official torvalds/linux)
-  --config PATH        Overrides file (default: config.txt)
+  --config PATH        Common overrides (default: eku.conf)
+  --flavor NAME        both (default), se, aa, or custom (single generic build)
   --patches PATH       Patch directory (default: patches)
   --output PATH        Out-of-tree build directory (default: build)
   --artifacts PATH     Copy successful build artifacts here (default: out)
@@ -41,7 +42,8 @@ class Options {
   String repo =
       'https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git';
   String? tag;
-  String config = 'config.txt';
+  String config = 'eku.conf';
+  String flavor = 'both';
   String patches = 'patches';
   String output = 'build';
   String artifacts = 'out';
@@ -75,6 +77,7 @@ class Options {
         '--tag',
         '--repo',
         '--config',
+        '--flavor',
         '--patches',
         '--output',
         '--artifacts',
@@ -99,6 +102,8 @@ class Options {
           result.repo = value;
         case '--config':
           result.config = value;
+        case '--flavor':
+          result.flavor = value;
         case '--patches':
           result.patches = value;
         case '--output':
@@ -117,6 +122,9 @@ class Options {
         case '--target':
           result.targets.add(value);
       }
+    }
+    if (!const ['both', 'se', 'aa', 'custom'].contains(result.flavor)) {
+      throw BuildFailure('--flavor must be both, se, aa, or custom');
     }
     for (final target in [result.defconfig, ...result.targets]) {
       if (!RegExp(r'^[a-zA-Z0-9_][a-zA-Z0-9_./+-]*$').hasMatch(target)) {
@@ -377,28 +385,76 @@ Future<void> prepareSource(Options options, Runner runner) async {
   }
 }
 
+class BuildProfile {
+  BuildProfile(this.overrides, this.variables, this.text);
+  final Map<String, String> overrides;
+  final Map<String, String> variables;
+  final String text;
+
+  static Future<BuildProfile> load(Options options, String flavor) async {
+    final variables = <String, String>{};
+    final overrides = await readOverrides(
+      File(options.config),
+      buildVariables: variables,
+    );
+    if (flavor != 'custom') {
+      final file = File.fromUri(
+        Platform.script.resolve('profiles/linux-eku-$flavor.conf'),
+      );
+      overrides.addAll(await readOverrides(file, buildVariables: variables));
+    }
+    if (options.llvm) variables['LLVM'] = '1';
+    final text = flavor == 'custom'
+        ? await File(options.config).readAsString()
+        : '# Effective ekuOS profile: common settings followed by $flavor settings.\n'
+              '${variables.entries.map((item) => '${item.key}=${item.value}\n').join()}'
+              '${overrides.entries.map((item) => '${item.key}=${item.value}\n').join()}';
+    return BuildProfile(overrides, variables, text);
+  }
+}
+
 Future<void> build(Options options, Log log) async {
-  final source = Directory(options.source);
+  final flavors = options.flavor == 'both' ? ['se', 'aa'] : [options.flavor];
+  final profiles = <String, BuildProfile>{};
+  for (final flavor in flavors) {
+    profiles[flavor] = await BuildProfile.load(options, flavor);
+  }
   final patches = Directory(options.patches).absolute;
-  final buildVariables = <String, String>{};
-  final overrides = await readOverrides(
-    File(options.config),
-    buildVariables: buildVariables,
-  );
-  if (options.llvm) buildVariables['LLVM'] = '1';
   if (!await patches.exists()) {
     throw BuildFailure('Patch directory not found: ${patches.path}');
   }
   final runner = Runner(log);
   await prepareSource(options, runner);
-  final sourcePath = await source.resolveSymbolicLinks();
-  final output = Directory(options.output).absolute;
+  final sourcePath = await Directory(options.source).resolveSymbolicLinks();
+  await applyPatches(patches, sourcePath, runner);
+  // Each flavor uses all requested CPUs in turn, with independent O= trees.
+  for (final entry in profiles.entries) {
+    await buildSingle(options, log, sourcePath, entry.key, entry.value);
+  }
+  log.ok('All requested kernel builds completed');
+}
+
+Future<void> buildSingle(
+  Options options,
+  Log log,
+  String sourcePath,
+  String flavor,
+  BuildProfile profile,
+) async {
+  final suffix = flavor == 'custom' ? '' : '/linux-eku-$flavor';
+  log.info(
+    'Building ${flavor == 'custom' ? 'custom kernel' : 'linux-eku-$flavor'} with ${options.jobs} parallel jobs',
+  );
+  final buildVariables = profile.variables;
+  final overrides = profile.overrides;
+  final runner = Runner(log);
+  final output = Directory('${options.output}$suffix').absolute;
   await output.create(recursive: true);
   final outputPath = await output.resolveSymbolicLinks();
   if (sourcePath == outputPath) {
     throw BuildFailure('--output must differ from --source');
   }
-  final artifacts = Directory(options.artifacts).absolute;
+  final artifacts = Directory('${options.artifacts}$suffix').absolute;
   await artifacts.create(recursive: true);
   final artifactsPath = await artifacts.resolveSymbolicLinks();
   for (final path in [sourcePath, outputPath]) {
@@ -423,7 +479,6 @@ Future<void> build(Options options, Log log) async {
       'Unset KCONFIG_CONFIG so this script can manage output/.config',
     );
   }
-  await applyPatches(patches, sourcePath, runner);
   final makeArgs = [
     '-C',
     sourcePath,
@@ -464,7 +519,15 @@ Future<void> build(Options options, Log log) async {
     ...options.targets,
   ]);
   log.ok('Build complete: $outputPath');
-  await copyArtifacts(outputPath, artifactsPath, options, buildVariables, log);
+  await copyArtifacts(
+    outputPath,
+    artifactsPath,
+    options,
+    buildVariables,
+    log,
+    flavor: flavor,
+    effectiveProfile: profile.text,
+  );
 }
 
 Future<void> copyArtifacts(
@@ -472,8 +535,10 @@ Future<void> copyArtifacts(
   String destination,
   Options options,
   Map<String, String> buildVariables,
-  Log log,
-) async {
+  Log log, {
+  String flavor = 'custom',
+  String? effectiveProfile,
+}) async {
   final files = <String, String>{};
   for (final name in [
     'vmlinux',
@@ -572,7 +637,12 @@ Future<void> copyArtifacts(
     }
     manifest.add({'path': item.value, 'bytes': await target.length()});
   }
-  await File(options.config).copy('$destination/build-profile.conf');
+  if (effectiveProfile == null) {
+    await File(options.config).copy('$destination/build-profile.conf');
+  } else {
+    await File('$destination/build-profile.conf')
+        .writeAsString(effectiveProfile);
+  }
   final revision = await Process.run('git', [
     '-C',
     options.source,
@@ -588,6 +658,8 @@ Future<void> copyArtifacts(
         ? revision.stdout.toString().trim()
         : null,
     'tag': options.tag,
+    'flavor': flavor,
+    'package': flavor == 'custom' ? null : 'linux-eku-$flavor',
     'makeVariables': buildVariables,
     'arch': options.arch,
     'targets': options.targets,
