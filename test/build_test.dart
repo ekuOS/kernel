@@ -119,6 +119,10 @@ Future<void> main(List<String> args) async {
           builder.Options.parse([]).source == 'linux',
           'Wrong default source',
         );
+        check(
+          builder.Options.parse([]).jobs == Platform.numberOfProcessors,
+          'Default parallelism does not match the processor count',
+        );
       },
     );
 
@@ -243,6 +247,10 @@ fail:
           'Toolchain is missing from manifest',
         );
         check(
+          manifest['jobs'] == 2 && manifest['signedModules'] == 0,
+          'Incorrect parallelism or signing metadata',
+        );
+        check(
           'LLVM=1'.allMatches(result.stdout.toString()).length == 3,
           'LLVM was not passed to every make invocation',
         );
@@ -275,6 +283,11 @@ fail:
             .writeAsString('stale');
         await File('${moduleBuild.path}/modules.order')
             .writeAsString('kernel/example.o\n');
+        final certs = await Directory('${moduleBuild.path}/certs').create();
+        await File('${certs.path}/signing_key.pem')
+            .writeAsString('private key');
+        await File('${certs.path}/signing_key.x509')
+            .writeAsString('public certificate');
         final destination = '${root.path}/module-export';
         await builder.copyArtifacts(
           moduleBuild.path,
@@ -288,6 +301,13 @@ fail:
                   'built module' &&
               !await File('$destination/modules/kernel/stale.ko').exists(),
           'Incorrect module export',
+        );
+        check(
+          await File('$destination/signing_key.x509').readAsString() ==
+                  'public certificate' &&
+              !await File('$destination/signing_key.pem').exists() &&
+              !await File('$destination/certs/signing_key.pem').exists(),
+          'Signing key export must include only the public certificate',
         );
       },
     );

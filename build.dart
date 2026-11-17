@@ -486,11 +486,15 @@ Future<void> copyArtifacts(
     'modules.builtin.modinfo',
     'modules.builtin.ranges',
     'include/config/kernel.release',
+    'certs/signing_key.x509',
   ]) {
     if (await File('$output/$name').exists()) {
-      files[name] = name == 'include/config/kernel.release'
-          ? 'kernel.release'
-          : name;
+      files[name] =
+          const {
+            'include/config/kernel.release': 'kernel.release',
+            'certs/signing_key.x509': 'signing_key.x509',
+          }[name] ??
+          name;
     }
   }
   for (final image in [
@@ -530,11 +534,42 @@ Future<void> copyArtifacts(
       )) {
     throw BuildFailure('No kernel image or modules found to export in $output');
   }
+  final resolvedConfig = await readOverrides(File('$output/.config'));
+  final signModules =
+      resolvedConfig['CONFIG_MODULE_SIG_ALL'] == 'y' ||
+      resolvedConfig['CONFIG_MODULE_SIG_FORCE'] == 'y';
+  var signedModules = 0;
   final manifest = <Map<String, Object>>[];
   for (final item in files.entries) {
     final target = File('$destination/${item.value}');
     await target.parent.create(recursive: true);
     await File('$output/${item.key}').copy(target.path);
+    if (item.key.endsWith('.ko') && signModules) {
+      // Kbuild signs at modules_install time. Sign our exported copies using
+      // its native executable, without exporting the private signing key.
+      final key = jsonDecode(
+        resolvedConfig['CONFIG_MODULE_SIG_KEY'] ?? '"certs/signing_key.pem"',
+      ) as String;
+      final hash = jsonDecode(
+        resolvedConfig['CONFIG_MODULE_SIG_HASH'] ?? '"sha256"',
+      ) as String;
+      final outputKey = key.startsWith('/') ? key : '$output/$key';
+      final keyPath = await File(outputKey).exists()
+          ? outputKey
+          : '${options.source}/$key';
+      final signed = await Process.run('$output/scripts/sign-file', [
+        hash,
+        keyPath,
+        '$output/certs/signing_key.x509',
+        target.path,
+      ]);
+      if (signed.exitCode != 0) {
+        throw BuildFailure(
+          'Module signing failed: ${item.value}\n${signed.stdout}${signed.stderr}',
+        );
+      }
+      signedModules++;
+    }
     manifest.add({'path': item.value, 'bytes': await target.length()});
   }
   await File(options.config).copy('$destination/build-profile.conf');
@@ -545,10 +580,31 @@ Future<void> copyArtifacts(
     '--verify',
     'HEAD',
   ]);
-  await File('$destination/build-info.json').writeAsString(
-    '${const JsonEncoder.withIndent('  ').convert({'builtAt': DateTime.now().toUtc().toIso8601String(), 'source': Directory(options.source).absolute.path, 'revision': revision.exitCode == 0 ? revision.stdout.toString().trim() : null, 'tag': options.tag, 'makeVariables': buildVariables, 'arch': options.arch, 'targets': options.targets, 'files': manifest})}\n',
-  );
+  final compiler = resolvedConfig['CONFIG_CC_VERSION_TEXT'];
+  final metadata = {
+    'builtAt': DateTime.now().toUtc().toIso8601String(),
+    'source': Directory(options.source).absolute.path,
+    'revision': revision.exitCode == 0
+        ? revision.stdout.toString().trim()
+        : null,
+    'tag': options.tag,
+    'makeVariables': buildVariables,
+    'arch': options.arch,
+    'targets': options.targets,
+    'jobs': options.jobs,
+    'defconfig': options.defconfig,
+    'compiler': compiler == null ? null : jsonDecode(compiler),
+    'signedModules': signedModules,
+    'files': manifest,
+  };
+  await File(
+    '$destination/build-info.json',
+  ).writeAsString('${const JsonEncoder.withIndent('  ').convert(metadata)}\n');
   log.ok('Exported ${files.length} artifacts to $destination');
+  if (signedModules > 0)
+    log.ok(
+      'Signed $signedModules exported modules; private key stays in build directory',
+    );
 }
 
 Future<void> main(List<String> args) async {
