@@ -1,0 +1,6 @@
+# CONFIG_ prefix is optional. Later entries override earlier entries.
+# Quote string values exactly as they should appear in the kernel .config.
+# LOCALVERSION="-ekuos"
+# CONFIG_IKCONFIG=y
+# CONFIG_IKCONFIG_PROC=y
+# CONFIG_DEBUG_INFO=n
