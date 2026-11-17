@@ -638,6 +638,42 @@ class BuildProfile {
   final Map<String, String> variables;
   final String text;
 
+  Future<BuildProfile> forSource(String source, Log log) async {
+    final kconfig = File('$source/mm/Kconfig.debug');
+    const aliases = ['CONFIG_DEBUG_WX', 'CONFIG_CHECK_WX'];
+    if (!aliases.any(overrides.containsKey) || !await kconfig.exists())
+      return this;
+    final definitions = await kconfig.readAsString();
+    final available = aliases
+        .where(
+          (key) => RegExp(
+            '^\\s*(?:menu)?config ${key.substring(7)}\\s*\$',
+            multiLine: true,
+          ).hasMatch(definitions),
+        )
+        .toList();
+    if (available.length != 1) return this;
+    final target = available.single;
+    final other = aliases.firstWhere((key) => key != target);
+    if (!overrides.containsKey(other)) return this;
+    final value = overrides[other]!;
+    if (overrides.containsKey(target) && overrides[target] != value) {
+      throw BuildFailure('Conflicting values for $target and its alias $other');
+    }
+    final resolved = Map<String, String>.of(overrides)..remove(other);
+    resolved[target] = value;
+    log.info('$other -> $target (W+X check symbol defined by this source)');
+    return BuildProfile(resolved, variables, render(resolved, variables));
+  }
+
+  static String render(
+    Map<String, String> values,
+    Map<String, String> variables,
+  ) =>
+      '# Effective ekuOS profile.\n'
+      '${variables.entries.map((item) => '${item.key}=${item.value}\n').join()}'
+      '${values.entries.map((item) => '${item.key}=${item.value}\n').join()}';
+
   static Future<BuildProfile> load(Options options, String flavor) async {
     final variables = <String, String>{};
     final overrides = await readOverrides(
@@ -653,9 +689,7 @@ class BuildProfile {
     if (options.llvm) variables['LLVM'] = '1';
     final text = flavor == 'custom'
         ? await File(options.config).readAsString()
-        : '# Effective ekuOS profile: common settings followed by $flavor settings.\n'
-              '${variables.entries.map((item) => '${item.key}=${item.value}\n').join()}'
-              '${overrides.entries.map((item) => '${item.key}=${item.value}\n').join()}';
+        : render(overrides, variables);
     return BuildProfile(overrides, variables, text);
   }
 }
@@ -676,7 +710,8 @@ Future<void> build(Options options, Log log) async {
   await applyPatches(patches, sourcePath, runner);
   // Each flavor uses all requested CPUs in turn, with independent O= trees.
   for (final entry in profiles.entries) {
-    await buildSingle(options, log, sourcePath, entry.key, entry.value);
+    final profile = await entry.value.forSource(sourcePath, log);
+    await buildSingle(options, log, sourcePath, entry.key, profile);
   }
   log.ok('All requested kernel builds completed');
 }
