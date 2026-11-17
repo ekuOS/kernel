@@ -83,7 +83,6 @@ Future<void> main(List<String> args) async {
       'CLI rejects missing values, bad jobs and make variable injection',
       () async {
         for (final args in [
-          <String>[],
           ['--source'],
           ['--source', 'x', '--jobs', '0'],
           ['--source', 'x', '--target', 'CC=anything'],
@@ -94,6 +93,10 @@ Future<void> main(List<String> args) async {
           }, 'Accepted $args');
         }
         check(builder.Options.parse(['--help']).help, 'Help requires a source');
+        check(
+          builder.Options.parse([]).source == 'linux',
+          'Wrong default source',
+        );
       },
     );
 
@@ -207,6 +210,127 @@ fail:
         'Make failure was ignored',
       );
     });
+    final upstream = await Directory('${root.path}/upstream').create();
+    for (final name in ['Makefile', 'defaults']) {
+      await File('${source.path}/$name').copy('${upstream.path}/$name');
+    }
+    await File('${upstream.path}/hello.c')
+        .writeAsString('int main(void) { return 0; }\n');
+    await File('${upstream.path}/version.txt').writeAsString('before\n');
+    Future<void> git(List<String> args) async {
+      final result = await Process.run('git', [
+        '-C',
+        upstream.path,
+        '-c',
+        'user.name=Fixture',
+        '-c',
+        'user.email=fixture@example.invalid',
+        '-c',
+        'commit.gpgsign=false',
+        ...args,
+      ]);
+      check(result.exitCode == 0, 'Fixture Git failure: ${result.stderr}');
+    }
+
+    await git(['init', '-b', 'main']);
+    await git(['add', '.']);
+    await git(['commit', '-m', 'Initial fixture']);
+    await git(['tag', 'vtest-one']);
+    await File('${upstream.path}/latest.txt').writeAsString('latest commit\n');
+    await git(['add', '.']);
+    await git(['commit', '-m', 'Latest fixture']);
+    await git(['tag', 'vtest-two']);
+    final latestClone = '${root.path}/clone-latest';
+    final taggedClone = '${root.path}/clone-tag';
+    List<String> cloneArgs(String path) => [
+      '--repo',
+      upstream.uri.toString(),
+      '--source',
+      path,
+      '--output',
+      '$path-out',
+    ];
+    await test('clone upstream HEAD, apply patches and compile', () async {
+      final result = await run(cloneArgs(latestClone));
+      check(result.exitCode == 0, '${result.stdout}\n${result.stderr}');
+      check(
+        await File('$latestClone/latest.txt').exists(),
+        'Did not clone HEAD',
+      );
+      check(
+        (await Process.run('$latestClone-out/kernel-demo', [])).exitCode == 7,
+        'Cloned source was not patched and compiled',
+      );
+      final shallow = await Process.run('git', [
+        '-C',
+        latestClone,
+        'rev-parse',
+        '--is-shallow-repository',
+      ]);
+      check(
+        shallow.stdout.toString().trim() == 'true',
+        'Clone was not shallow',
+      );
+    });
+    await test('clone and reuse an exact tag instead of latest HEAD', () async {
+      final args = [...cloneArgs(taggedClone), '--tag', 'vtest-one'];
+      for (var i = 0; i < 2; i++) {
+        final result = await run(args);
+        check(result.exitCode == 0, '${result.stdout}\n${result.stderr}');
+        check(
+          result.stdout.toString().contains('Verified tag vtest-one'),
+          'Tag was not verified',
+        );
+      }
+      check(
+        !await File('$taggedClone/latest.txt').exists(),
+        'Cloned wrong revision',
+      );
+      check(
+        await File('$taggedClone-out/kernel-demo').exists(),
+        'Tag was not built',
+      );
+    });
+    await test(
+      'tag mismatch preserves the existing checkout and stops',
+      () async {
+        final result = await run([
+          ...cloneArgs(latestClone),
+          '--tag',
+          'vtest-one',
+        ]);
+        check(
+          result.exitCode != 0 &&
+              result.stderr.toString().contains('does not match tag'),
+          'Tag mismatch ignored',
+        );
+        check(
+          await File('$latestClone/latest.txt').exists(),
+          'Existing checkout changed',
+        );
+      },
+    );
+    await test('a branch name is not accepted as an exact tag', () async {
+      final path = '${root.path}/clone-branch';
+      final result = await run([...cloneArgs(path), '--tag', 'main']);
+      check(
+        result.exitCode != 0 && !await File('$path-out/.config').exists(),
+        'Branch accepted as tag',
+      );
+    });
+    await test(
+      'invalid and nonexistent tags fail before compilation',
+      () async {
+        for (final tag in ['../invalid', 'missing-tag']) {
+          final path = '${root.path}/clone-invalid';
+          final result = await run([...cloneArgs(path), '--tag', tag]);
+          check(
+            result.exitCode != 0 && !await File('$path-out/.config').exists(),
+            'Invalid tag accepted: $tag',
+          );
+        }
+      },
+    );
     await test('bad patch stops before configuration or compilation', () async {
       await File('${patches.path}/003-broken.patch').writeAsString('''
 --- a/version.txt

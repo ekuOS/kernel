@@ -6,9 +6,11 @@ import 'dart:io';
 
 const usage = '''Linux kernel builder (Dart SDK 3+)
 
-Usage: dart run build.dart --source PATH [options]
+Usage: dart run build.dart [options]
 
-  --source PATH        Linux source tree (required; patches modify this tree)
+  --source PATH        Source directory (default: linux; cloned if absent/empty)
+  --tag TAG            Clone an exact tag; default: upstream default branch HEAD
+  --repo URL           Git repository (default: official torvalds/linux)
   --config PATH        Overrides file (default: config.txt)
   --patches PATH       Patch directory (default: patches)
   --output PATH        Out-of-tree build directory (default: build)
@@ -22,6 +24,7 @@ Usage: dart run build.dart --source PATH [options]
 
 Relative paths are resolved against the current directory.
 Each run regenerates .config from the selected defconfig.
+Existing source trees are reused without pulling or switching revisions.
 ''';
 
 class BuildFailure implements Exception {
@@ -32,7 +35,10 @@ class BuildFailure implements Exception {
 }
 
 class Options {
-  String? source;
+  String source = 'linux';
+  String repo =
+      'https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git';
+  String? tag;
   String config = 'config.txt';
   String patches = 'patches';
   String output = 'build';
@@ -58,6 +64,8 @@ class Options {
       }
       if (!const {
         '--source',
+        '--tag',
+        '--repo',
         '--config',
         '--patches',
         '--output',
@@ -76,6 +84,10 @@ class Options {
       switch (option) {
         case '--source':
           result.source = value;
+        case '--tag':
+          result.tag = value;
+        case '--repo':
+          result.repo = value;
         case '--config':
           result.config = value;
         case '--patches':
@@ -94,9 +106,6 @@ class Options {
         case '--target':
           result.targets.add(value);
       }
-    }
-    if (!result.help && result.source == null) {
-      throw BuildFailure('--source is required');
     }
     for (final target in [result.defconfig, ...result.targets]) {
       if (!RegExp(r'^[a-zA-Z0-9_][a-zA-Z0-9_./+-]*$').hasMatch(target)) {
@@ -278,16 +287,83 @@ Future<void> applyPatches(
   }
 }
 
-Future<void> build(Options options, Log log) async {
-  final source = Directory(options.source!);
-  final patches = Directory(options.patches).absolute;
-  final overrides = await readOverrides(File(options.config));
+Future<void> prepareSource(Options options, Runner runner) async {
+  final source = Directory(options.source).absolute;
+  final tag = options.tag;
+  if (tag != null) {
+    final valid = await Process.run('git', [
+      'check-ref-format',
+      'refs/tags/$tag',
+    ]);
+    if (tag.startsWith('-') || valid.exitCode != 0) {
+      throw BuildFailure('Invalid Git tag: $tag');
+    }
+  }
+  final exists = await source.exists();
+  if (!exists || await source.list().isEmpty) {
+    runner.log.info('Cloning ${tag == null ? "upstream HEAD" : "tag $tag"}');
+    await runner.run('git', [
+      'clone',
+      '--depth',
+      '1',
+      '--single-branch',
+      if (tag != null) ...['--branch', tag],
+      '--',
+      options.repo,
+      source.path,
+    ]);
+  } else {
+    runner.log.info('Reusing source tree: ${source.path}');
+  }
   if (!await File('${source.path}/Makefile').exists()) {
     throw BuildFailure('Source Makefile not found: ${source.path}');
   }
+  if (tag != null) {
+    final top = await Process.run('git', [
+      '-C',
+      source.path,
+      'rev-parse',
+      '--show-toplevel',
+    ]);
+    if (top.exitCode != 0 ||
+        top.stdout.toString().trim() != await source.resolveSymbolicLinks()) {
+      throw BuildFailure('--tag requires a Git repository at ${source.path}');
+    }
+    final revision = await Process.run('git', [
+      '-C',
+      source.path,
+      'rev-parse',
+      '--verify',
+      'refs/tags/$tag^{commit}',
+    ]);
+    final head = await Process.run('git', [
+      '-C',
+      source.path,
+      'rev-parse',
+      '--verify',
+      'HEAD',
+    ]);
+    if (revision.exitCode != 0 ||
+        head.exitCode != 0 ||
+        revision.stdout.toString().trim() != head.stdout.toString().trim()) {
+      throw BuildFailure(
+        'Source HEAD does not match tag $tag. '
+        'Use a new --source directory to clone the requested tag.',
+      );
+    }
+    runner.log.ok('Verified tag $tag at ${head.stdout.toString().trim()}');
+  }
+}
+
+Future<void> build(Options options, Log log) async {
+  final source = Directory(options.source);
+  final patches = Directory(options.patches).absolute;
+  final overrides = await readOverrides(File(options.config));
   if (!await patches.exists()) {
     throw BuildFailure('Patch directory not found: ${patches.path}');
   }
+  final runner = Runner(log);
+  await prepareSource(options, runner);
   final sourcePath = await source.resolveSymbolicLinks();
   final output = Directory(options.output).absolute;
   await output.create(recursive: true);
@@ -308,7 +384,6 @@ Future<void> build(Options options, Log log) async {
       'Unset KCONFIG_CONFIG so this script can manage output/.config',
     );
   }
-  final runner = Runner(log);
   await applyPatches(patches, sourcePath, runner);
   final makeArgs = [
     '-C',

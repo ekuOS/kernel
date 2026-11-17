@@ -1,26 +1,34 @@
 # ekuOS kernel builder
 
-Build a Linux kernel using Dart as a scripting language. The script applies patches, merges text-based overrides into the default configuration, and compiles the kernel. It needs no pub packages or Bash/Python helper scripts. External commands are launched directly with argument lists.
+Build a Linux kernel using Dart as a scripting language. The script clones the source, applies patches, merges text-based overrides into the default configuration, and compiles the kernel. It needs no pub packages or Bash/Python helper scripts. External commands are launched directly with argument lists.
 
 ## Requirements
 
 - Dart SDK 3.0 or later
-- GNU make, GNU patch, a compiler, and the dependencies required to build your kernel
-- An unpacked Linux source tree, plus a suitable toolchain for cross compilation
+- Git, GNU make, GNU patch, a compiler, and the dependencies required to build your kernel
+- Network access for cloning, or an existing Linux source tree
+- A suitable toolchain for cross compilation, if needed
 
 ## Usage
 
 ```console
-dart run build.dart --source /path/to/linux
+dart run build.dart
 ```
 
-By default, the script reads `config.txt` and `patches/` from the current directory and writes configuration and build artifacts to `build/`. All relative paths are resolved against the current directory. Source and output paths must not contain spaces or shell metacharacters.
+By default, the script shallow-clones the default branch HEAD of the official Torvalds Linux repository into `linux/`, reads `config.txt` and `patches/`, and writes configuration and build artifacts to `build/`. The default revision is the latest upstream development code at clone time. To build a release, specify its exact tag with `--tag`.
+
+All relative paths are resolved against the current directory. Source and output paths must not contain spaces or shell metacharacters.
 
 ```console
+dart run build.dart --tag v6.12 --source linux-v6.12 --output build-v6.12
 dart run build.dart --source /path/to/linux --config config.txt --patches patches --output build --jobs 8
 dart run build.dart --source /path/to/linux --arch arm64 --cross-compile aarch64-linux-gnu- --defconfig defconfig --target Image --target modules
 dart run build.dart --help
 ```
+
+The tag above illustrates the syntax; choose the release you want to build. `--tag` accepts a tag name, not a branch name. `--repo URL` selects another Git repository, such as a stable kernel mirror or a local repository.
+
+A missing or empty source directory is cloned automatically using `git clone --depth 1 --single-branch`; with `--tag`, the clone also uses `--branch TAG`. Existing source trees are reused without fetching, pulling, resetting, or switching revisions. When `--tag` is supplied for an existing tree, its local tag must resolve to the current HEAD; otherwise the build stops. Use a new source directory to build a different tag or obtain a fresh upstream HEAD.
 
 ## Configuration file
 
@@ -39,10 +47,11 @@ Blank lines and comments beginning with `#` are ignored, except for `# CONFIG_..
 Each run performs these steps:
 
 1. Stream the overrides file one line at a time.
-2. Apply `.patch` and `.diff` files directly inside `patches/` in filename order. Use names such as `001-name.patch` and `-p1` paths with `a/` and `b/` prefixes.
-3. Generate defaults with `make O=... defconfig`. Select a different initial target with `--defconfig`.
-4. Merge overrides into the generated `.config`, then resolve dependencies with `make olddefconfig`.
-5. Verify that the resolved settings match the requested values, then compile with `make -j...`.
+2. Clone the source if needed and verify the requested tag, if supplied.
+3. Apply `.patch` and `.diff` files directly inside `patches/` in filename order. Use names such as `001-name.patch` and `-p1` paths with `a/` and `b/` prefixes.
+4. Generate defaults with `make O=... defconfig`. Select a different initial target with `--defconfig`.
+5. Merge overrides into the generated `.config`, then resolve dependencies with `make olddefconfig`.
+6. Verify that the resolved settings match the requested values, then compile with `make -j...`.
 
 If missing dependencies, unknown symbols, or other Kconfig rules prevent an override from taking effect, the script reports the requested and resolved values and stops. Each run regenerates the configuration from defaults, so manual edits to `build/.config` are discarded. Unset the `KCONFIG_CONFIG` environment variable before running the script.
 
@@ -58,7 +67,7 @@ dart analyze build.dart test/build_test.dart
 dart run test/build_test.dart
 ```
 
-Tests are written entirely in Dart. They create a small Makefile and C source in a temporary directory and exercise the build pipeline with real make, patch, and a C compiler. Kconfig dependency resolution is simulated by a Dart fixture. These tests do not compile a complete Linux kernel.
+Tests are written entirely in Dart. They create a small Makefile and C source in a temporary directory and exercise the build pipeline with real Git, make, patch, and a C compiler. Clone tests use a local Git repository with two tagged revisions and require no network access. Kconfig dependency resolution is simulated by a Dart fixture. These tests do not compile a complete Linux kernel.
 
 ## License
 
