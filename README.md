@@ -17,6 +17,8 @@ dart run build.dart
 
 By default, the script shallow-clones the default branch HEAD of the official Torvalds Linux repository into `linux/`, reads `config.txt` and `patches/`, and writes configuration and build artifacts to `build/`. The default revision is the latest upstream development code at clone time. To build a release, specify its exact tag with `--tag`.
 
+After a successful build, artifacts are copied to `out/` (override with `--artifacts PATH`). This includes the kernel image (for example, `out/bzImage`), `vmlinux`, `System.map`, the resolved `.config`, module metadata, and the modules listed in `modules.order`, preserving their paths under `out/modules/`. `build-profile.conf` records the input profile, and `build-info.json` records the source revision, toolchain selection, and exported file sizes. Files with matching names are overwritten; unrelated files from earlier exports are left in place. The artifact directory must not overlap the source or build directory. Artifacts are exported only after configuration verification and compilation succeed.
+
 All relative paths are resolved against the current directory. Source and output paths must not contain spaces or shell metacharacters.
 
 ```console
@@ -29,6 +31,20 @@ dart run build.dart --help
 The tag above illustrates the syntax; choose the release you want to build. `--tag` accepts a tag name, not a branch name. `--repo URL` selects another Git repository, such as a stable kernel mirror or a local repository.
 
 A missing or empty source directory is cloned automatically using `git clone --depth 1 --single-branch`; with `--tag`, the clone also uses `--branch TAG`. Existing source trees are reused without fetching, pulling, resetting, or switching revisions. When `--tag` is supplied for an existing tree, its local tag must resolve to the current HEAD; otherwise the build stops. Use a new source directory to build a different tag or obtain a fresh upstream HEAD.
+
+## ekuOS hardening profile
+
+```console
+dart run build.dart --config eku.conf --arch x86_64 --jobs 4
+```
+
+`eku.conf` selects Clang/LLVM with `LLVM=1`, which the builder passes to every make invocation rather than adding it to `.config`. You can also select this toolchain with `--llvm`. Install Clang, LLD, and LLVM utilities, plus the usual kernel build dependencies such as flex, bison, bc, OpenSSL development headers, and libelf development headers.
+
+The profile enables enforced kCFI, x86 kernel IBT, CPU mitigations, KASLR and stack-offset randomization, strong stack protection, strict memory permissions, fortified copies, hardened slab allocation, zero initialization, list corruption checks, seccomp, Landlock, Yama, SafeSetID, SELinux, and integrity lockdown. kCFI uses `CONFIG_CFI_CLANG`; it does not require LTO on modern kernels. The profile is intended for x86_64, and every override must survive Kconfig dependency resolution before compilation begins.
+
+These choices have runtime effects: zeroing memory on free adds overhead, lockdown restricts privileged kernel access, and disabling hibernation, kexec, `/dev/mem`, and legacy TIOCSTI removes those interfaces. SELinux requires an appropriate userspace policy for a complete system. This profile builds a kernel; it does not install it, configure a bootloader, or test boot/runtime behavior.
+
+See the upstream documentation on [Clang/LLVM builds](https://docs.kernel.org/kbuild/llvm.html) and [kernel self-protection](https://docs.kernel.org/security/self-protection.html).
 
 ## Configuration file
 

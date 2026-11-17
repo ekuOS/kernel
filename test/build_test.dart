@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import '../build.dart' as builder;
@@ -80,6 +81,27 @@ Future<void> main(List<String> args) async {
       }
     });
     await test(
+      'profile selects LLVM without adding a Kconfig symbol',
+      () async {
+        await overrides.writeAsString('LLVM=1\nFOO=y\n');
+        final variables = <String, String>{};
+        final values = await builder.readOverrides(
+          overrides,
+          buildVariables: variables,
+        );
+        check(
+          variables['LLVM'] == '1' &&
+              values.length == 1 &&
+              values['CONFIG_FOO'] == 'y',
+          'LLVM was treated as a Kconfig symbol',
+        );
+        await overrides.writeAsString('LLVM=invalid\n');
+        await rejects(() async {
+          await builder.readOverrides(overrides, buildVariables: {});
+        }, 'Invalid LLVM setting accepted');
+      },
+    );
+    await test(
       'CLI rejects missing values, bad jobs and make variable injection',
       () async {
         for (final args in [
@@ -112,6 +134,7 @@ Future<void> main(List<String> args) async {
 .PHONY: all defconfig olddefconfig fail
 all:
 \t\$(CC) hello.c -o \$(O)/kernel-demo
+\tcp \$(O)/kernel-demo \$(O)/vmlinux
 defconfig:
 \tcp defaults \$(O)/.config
 olddefconfig:
@@ -142,6 +165,8 @@ fail:
         source.path,
         '--output',
         output,
+        '--artifacts',
+        '${root.path}/export',
         '--config',
         overrides.path,
         '--patches',
@@ -190,6 +215,82 @@ fail:
         '${result.stdout}\n${result.stderr}',
       );
     });
+    await test(
+      'exports images, resolved config, profile and build manifest',
+      () async {
+        final result = await run(['--llvm']);
+        check(result.exitCode == 0, '${result.stdout}\n${result.stderr}');
+        final destination = '${root.path}/export';
+        check(
+          (await Process.run('$destination/vmlinux', [])).exitCode == 7,
+          'Exported image differs from compiled image',
+        );
+        check(
+          await File('$destination/.config').readAsString() ==
+              await File('$output/.config').readAsString(),
+          'Wrong exported configuration',
+        );
+        check(
+          await File('$destination/build-profile.conf').readAsString() ==
+              await overrides.readAsString(),
+          'Wrong exported profile',
+        );
+        final manifest = jsonDecode(
+          await File('$destination/build-info.json').readAsString(),
+        ) as Map<String, dynamic>;
+        check(
+          manifest['makeVariables']['LLVM'] == '1',
+          'Toolchain is missing from manifest',
+        );
+        check(
+          'LLVM=1'.allMatches(result.stdout.toString()).length == 3,
+          'LLVM was not passed to every make invocation',
+        );
+      },
+    );
+    await test(
+      'artifact directory must not overlap source or build tree',
+      () async {
+        for (final path in [source.path, output, '${source.path}/nested']) {
+          final result = await run(['--artifacts', path]);
+          check(
+            result.exitCode != 0 &&
+                result.stderr.toString().contains('must not overlap'),
+            'Unsafe artifact directory accepted: $path',
+          );
+        }
+      },
+    );
+    await test(
+      'module export follows modules.order and ignores stale modules',
+      () async {
+        final moduleBuild = await Directory('${root.path}/module-build')
+            .create();
+        await File('${moduleBuild.path}/.config')
+            .writeAsString('CONFIG_MODULES=y\n');
+        final module = File('${moduleBuild.path}/kernel/example.ko');
+        await module.parent.create(recursive: true);
+        await module.writeAsString('built module');
+        await File('${moduleBuild.path}/kernel/stale.ko')
+            .writeAsString('stale');
+        await File('${moduleBuild.path}/modules.order')
+            .writeAsString('kernel/example.o\n');
+        final destination = '${root.path}/module-export';
+        await builder.copyArtifacts(
+          moduleBuild.path,
+          destination,
+          builder.Options()..config = overrides.path,
+          {},
+          builder.Log(noColor: true),
+        );
+        check(
+          await File('$destination/modules/kernel/example.ko').readAsString() ==
+                  'built module' &&
+              !await File('$destination/modules/kernel/stale.ko').exists(),
+          'Incorrect module export',
+        );
+      },
+    );
     await test('Kconfig mismatch stops before compilation', () async {
       await File('$output/kernel-demo').delete();
       await overrides.writeAsString('UNAVAILABLE=y\n');
@@ -249,6 +350,8 @@ fail:
       path,
       '--output',
       '$path-out',
+      '--artifacts',
+      '$path-artifacts',
     ];
     await test('clone upstream HEAD, apply patches and compile', () async {
       final result = await run(cloneArgs(latestClone));

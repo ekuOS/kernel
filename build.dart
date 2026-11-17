@@ -14,6 +14,8 @@ Usage: dart run build.dart [options]
   --config PATH        Overrides file (default: config.txt)
   --patches PATH       Patch directory (default: patches)
   --output PATH        Out-of-tree build directory (default: build)
+  --artifacts PATH     Copy successful build artifacts here (default: out)
+  --llvm               Use Clang/LLVM (also selectable with LLVM=1 in profile)
   --defconfig NAME     Initial make target (default: defconfig)
   --jobs NUMBER        Parallel jobs (default: available CPU count)
   --arch NAME          Kernel ARCH, e.g. arm64
@@ -42,6 +44,8 @@ class Options {
   String config = 'config.txt';
   String patches = 'patches';
   String output = 'build';
+  String artifacts = 'out';
+  bool llvm = false;
   String defconfig = 'defconfig';
   int jobs = Platform.numberOfProcessors;
   String? arch;
@@ -62,6 +66,10 @@ class Options {
         result.noColor = true;
         continue;
       }
+      if (option == '--llvm') {
+        result.llvm = true;
+        continue;
+      }
       if (!const {
         '--source',
         '--tag',
@@ -69,6 +77,7 @@ class Options {
         '--config',
         '--patches',
         '--output',
+        '--artifacts',
         '--defconfig',
         '--jobs',
         '--arch',
@@ -94,6 +103,8 @@ class Options {
           result.patches = value;
         case '--output':
           result.output = value;
+        case '--artifacts':
+          result.artifacts = value;
         case '--defconfig':
           result.defconfig = value;
         case '--jobs':
@@ -144,7 +155,10 @@ final assignment = RegExp(r'^(?:CONFIG_)?([A-Za-z0-9_]+)=(.*)$');
 final disabled = RegExp(r'^# CONFIG_([A-Za-z0-9_]+) is not set$');
 
 /// Values are passed through verbatim; quote Kconfig string values in the file.
-Future<Map<String, String>> readOverrides(File file) async {
+Future<Map<String, String>> readOverrides(
+  File file, {
+  Map<String, String>? buildVariables,
+}) async {
   final values = <String, String>{};
   var number = 0;
   await for (final raw
@@ -164,7 +178,15 @@ Future<Map<String, String>> readOverrides(File file) async {
     if (match == null || match[2]!.trim().isEmpty) {
       throw BuildFailure('${file.path}:$number: expected KEY=value');
     }
-    values['CONFIG_${match[1]}'] = match[2]!.trim();
+    final value = match[2]!.trim();
+    if (buildVariables != null && line.startsWith('LLVM=')) {
+      if (value != '1') {
+        throw BuildFailure('${file.path}:$number: LLVM must be 1');
+      }
+      buildVariables['LLVM'] = value;
+    } else {
+      values['CONFIG_${match[1]}'] = value;
+    }
   }
   return values;
 }
@@ -358,7 +380,12 @@ Future<void> prepareSource(Options options, Runner runner) async {
 Future<void> build(Options options, Log log) async {
   final source = Directory(options.source);
   final patches = Directory(options.patches).absolute;
-  final overrides = await readOverrides(File(options.config));
+  final buildVariables = <String, String>{};
+  final overrides = await readOverrides(
+    File(options.config),
+    buildVariables: buildVariables,
+  );
+  if (options.llvm) buildVariables['LLVM'] = '1';
   if (!await patches.exists()) {
     throw BuildFailure('Patch directory not found: ${patches.path}');
   }
@@ -370,6 +397,18 @@ Future<void> build(Options options, Log log) async {
   final outputPath = await output.resolveSymbolicLinks();
   if (sourcePath == outputPath) {
     throw BuildFailure('--output must differ from --source');
+  }
+  final artifacts = Directory(options.artifacts).absolute;
+  await artifacts.create(recursive: true);
+  final artifactsPath = await artifacts.resolveSymbolicLinks();
+  for (final path in [sourcePath, outputPath]) {
+    if (artifactsPath == path ||
+        artifactsPath.startsWith('$path/') ||
+        path.startsWith('$artifactsPath/')) {
+      throw BuildFailure(
+        '--artifacts must not overlap the source or build directory',
+      );
+    }
   }
   // Kbuild embeds O= in shell commands: spaces and shell metacharacters are unsafe.
   for (final path in [sourcePath, outputPath]) {
@@ -389,6 +428,7 @@ Future<void> build(Options options, Log log) async {
     '-C',
     sourcePath,
     'O=$outputPath',
+    for (final item in buildVariables.entries) '${item.key}=${item.value}',
     if (options.arch != null) 'ARCH=${options.arch}',
     if (options.crossCompile != null) 'CROSS_COMPILE=${options.crossCompile}',
   ];
@@ -424,6 +464,91 @@ Future<void> build(Options options, Log log) async {
     ...options.targets,
   ]);
   log.ok('Build complete: $outputPath');
+  await copyArtifacts(outputPath, artifactsPath, options, buildVariables, log);
+}
+
+Future<void> copyArtifacts(
+  String output,
+  String destination,
+  Options options,
+  Map<String, String> buildVariables,
+  Log log,
+) async {
+  final files = <String, String>{};
+  for (final name in [
+    'vmlinux',
+    'vmlinuz',
+    'System.map',
+    '.config',
+    'Module.symvers',
+    'modules.order',
+    'modules.builtin',
+    'modules.builtin.modinfo',
+    'modules.builtin.ranges',
+    'include/config/kernel.release',
+  ]) {
+    if (await File('$output/$name').exists()) {
+      files[name] = name == 'include/config/kernel.release'
+          ? 'kernel.release'
+          : name;
+    }
+  }
+  for (final image in [
+    'arch/x86/boot/bzImage',
+    'arch/arm64/boot/Image',
+    'arch/arm64/boot/Image.gz',
+    'arch/arm/boot/zImage',
+    'arch/arm/boot/uImage',
+    'arch/riscv/boot/Image',
+    'arch/riscv/boot/Image.gz',
+    'arch/s390/boot/bzImage',
+    'arch/loongarch/boot/vmlinuz.efi',
+    'arch/powerpc/boot/zImage',
+  ]) {
+    if (await File('$output/$image').exists())
+      files[image] = image.split('/').last;
+  }
+  final order = File('$output/modules.order');
+  if (await order.exists()) {
+    for (final line in await order.readAsLines()) {
+      if (line.trim().isEmpty) continue;
+      final module = line.trim().replaceFirst(RegExp(r'\.o$'), '.ko');
+      if (module.startsWith('/') ||
+          module.split('/').contains('..') ||
+          !module.endsWith('.ko')) {
+        throw BuildFailure('Invalid module path in modules.order: $line');
+      }
+      if (!await File('$output/$module').exists()) {
+        throw BuildFailure('Built module is missing: $module');
+      }
+      files[module] = 'modules/$module';
+    }
+  }
+  if (!files.containsKey('vmlinux') &&
+      !files.keys.any(
+        (path) => path.startsWith('arch/') || path.endsWith('.ko'),
+      )) {
+    throw BuildFailure('No kernel image or modules found to export in $output');
+  }
+  final manifest = <Map<String, Object>>[];
+  for (final item in files.entries) {
+    final target = File('$destination/${item.value}');
+    await target.parent.create(recursive: true);
+    await File('$output/${item.key}').copy(target.path);
+    manifest.add({'path': item.value, 'bytes': await target.length()});
+  }
+  await File(options.config).copy('$destination/build-profile.conf');
+  final revision = await Process.run('git', [
+    '-C',
+    options.source,
+    'rev-parse',
+    '--verify',
+    'HEAD',
+  ]);
+  await File('$destination/build-info.json').writeAsString(
+    '${const JsonEncoder.withIndent('  ').convert({'builtAt': DateTime.now().toUtc().toIso8601String(), 'source': Directory(options.source).absolute.path, 'revision': revision.exitCode == 0 ? revision.stdout.toString().trim() : null, 'tag': options.tag, 'makeVariables': buildVariables, 'arch': options.arch, 'targets': options.targets, 'files': manifest})}\n',
+  );
+  log.ok('Exported ${files.length} artifacts to $destination');
 }
 
 Future<void> main(List<String> args) async {
