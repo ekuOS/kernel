@@ -290,6 +290,7 @@ Future<void> main() async {
         success(await clean(root));
         await Directory('${root.path}/out/linux-eku-se')
             .create(recursive: true);
+        success(await clean(root, ['--dry-run']));
         await File('${root.path}/out/personal.txt').writeAsString('keep');
         final result = await clean(root);
         check(

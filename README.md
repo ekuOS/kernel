@@ -47,6 +47,21 @@ dart run build.dart --flavor custom --config config.txt --source /path/to/linux
 dart run build.dart --flavor custom --config config.txt --arch arm64 --llvm --target Image --target modules
 ```
 
+## Cleaning
+
+```console
+dart run build.dart clean --dry-run
+dart run build.dart clean
+dart run build.dart clean --keep-source
+dart run build.dart clean --source linux-stable --output build --artifacts out
+```
+
+`clean` removes the entire selected artifact, build, and source directory trees (default: `out/`, `build/`, and `linux/`), including both flavors. This deletes local source edits, applied patches in the source tree, build logs, and generated private module signing keys. `--keep-source` preserves the source tree while removing builds and artifacts. `--dry-run` validates the targets and prints the deletion plan without deleting files. Missing directories are skipped, so repeated cleanup succeeds.
+
+The command needs only Dart and does not clone sources, load profiles, or invoke make. It accepts `--source`, `--output`, and `--artifacts` for custom paths. Cleanup operates on the parent directories; build-only options such as `--flavor` are rejected.
+
+All targets are checked before deletion starts. Generated directories are identified by `.eku-kernel-generated.json` markers, or by legacy Linux source layouts, Kbuild Makefiles, and build manifests. Empty directory trees are also removable. Unrecognized directories, top-level symlinks, project roots, and paths containing the configured input profile, patches, or built-in profiles are refused. Recursive deletion does not follow symlinks inside a target. Input profiles and the separate `patches/` directory are preserved.
+
 ## Source and patches
 
 A missing or empty source directory is shallow-cloned from the official stable Linux repository (`https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git`). Without `--tag`, the builder lists remote tags, accepts only formal releases named `vMAJOR.MINOR` or `vMAJOR.MINOR.PATCH`, and selects the greatest numeric version, including maintenance releases. Release candidates and other suffixes are excluded. It then runs `git clone --depth 1 --single-branch --branch TAG`. A lookup failure or a repository without matching releases stops the build; there is no fallback to a development branch.
@@ -113,10 +128,13 @@ Logs show elapsed time, stage labels, and real-time command output. Information 
 dart format --output=none --set-exit-if-changed build.dart test/
 dart analyze build.dart test/
 dart run test/build_test.dart
+dart run test/clean_test.dart
 dart run test/verify_kernel.dart
 ```
 
 The fixture suite uses real Git, make, patch, and a C compiler in temporary directories; it simulates Kconfig with Dart and requires no network. It covers both-flavor isolation, per-flavor selection, configuration merging, artifact export, and failure propagation.
+
+The cleanup suite uses temporary directories to check real deletion, dry runs, source preservation, legacy directory recognition, custom and nested paths, protected inputs, and symlink handling. It does not remove the workspace's source or build artifacts.
 
 The optional real-build verifier checks both default flavor directories. It requires OpenSSL and GNU readelf, verifies all effective profile values, default confidentiality lockdown, exclusive LSM selection, file sizes and copied contents, kCFI/IBT ELF sections, and every exported module's PKCS#7 signature against its flavor's public certificate. It confirms that module payloads match the original compiled modules and that private keys were not exported. For custom directories:
 

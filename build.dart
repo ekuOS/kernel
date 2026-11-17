@@ -287,7 +287,12 @@ Future<bool> isGeneratedDirectory(
         return true;
     }
   }
-  return allowEmpty && await Directory(path).list(followLinks: false).isEmpty;
+  // Empty directory skeletons can remain when validation fails before markers
+  // are written. They contain no files or symlinks to preserve.
+  return allowEmpty &&
+      await Directory(path)
+          .list(recursive: true, followLinks: false)
+          .every((entry) => entry is Directory);
 }
 
 Future<void> clean(Options options, Log log) async {
