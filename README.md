@@ -7,7 +7,7 @@ Build hardened Linux kernels using Dart as a scripting language. One command clo
 | `linux-eku-se` | SELinux | `-eku-se` | `build/linux-eku-se/` | `out/linux-eku-se/` |
 | `linux-eku-aa` | AppArmor | `-eku-aa` | `build/linux-eku-aa/` | `out/linux-eku-aa/` |
 
-Both kernels default to **confidentiality lockdown**. SELinux remains the primary system option; the AppArmor kernel provides a separate boot option for snap confinement. The builder does not install kernels or change the bootloader.
+Both kernels default to **confidentiality lockdown**. SELinux remains the primary system option; the AppArmor kernel provides an alternative security profile. The builder does not install kernels or change the bootloader.
 
 ## Requirements
 
@@ -32,7 +32,7 @@ The default `--flavor both` builds SELinux first, then AppArmor, using all proce
 `--config` selects the common profile (default: `eku.conf`). The built-in flavor profile is merged afterward and takes precedence:
 
 - `profiles/linux-eku-se.conf`: enforcing SELinux, with AppArmor disabled.
-- `profiles/linux-eku-aa.conf`: AppArmor, with SELinux disabled, plus snap-related kernel features.
+- `profiles/linux-eku-aa.conf`: AppArmor, with SELinux disabled, plus SquashFS, namespaces, and cgroup support.
 
 Flavor profile paths are resolved relative to `build.dart`. Other relative paths are resolved against the current directory. `--output` and `--artifacts` select the parent directories of the flavor directories. Source and build paths must not contain spaces or shell metacharacters.
 
@@ -67,11 +67,9 @@ In the SELinux flavor, development/permissive support and the `selinux=0` boot p
 
 The Linux 7.4-rc3 sources mark both SELinux and AppArmor with `LSM_FLAG_EXCLUSIVE`. They cannot be active together on this kernel; listing both in `CONFIG_LSM` does not provide simultaneous enforcement. Each flavor selects exactly one major LSM while retaining Landlock, Yama, SafeSetID, and lockdown. See the upstream [LSM documentation](https://docs.kernel.org/admin-guide/LSM/index.html), [Clang build documentation](https://docs.kernel.org/kbuild/llvm.html), and [kernel self-protection documentation](https://docs.kernel.org/security/self-protection.html).
 
-## Snap confinement
+## Runtime checks
 
-Use the **AppArmor flavor** for snap's AppArmor-based sandbox. It includes SquashFS with common compression formats, loop devices, securityfs, audit, namespaces including user namespaces, seccomp, memory cgroups, process limits, and device cgroups.
-
-Kernel compilation alone does not establish strict confinement. Install compatible AppArmor userspace tooling, snapd, and its generated policies, and check the running system after boot:
+Install the appropriate userspace policy tools and policies, then check the running system after boot:
 
 ```console
 cat /sys/kernel/security/lsm
@@ -80,13 +78,9 @@ cat /sys/kernel/security/lockdown
 getenforce
 # AppArmor flavor:
 aa-status
-snap debug sandbox-features
-snap info SNAP_NAME
 ```
 
-The active LSM list should include `apparmor` for the AppArmor flavor, or `selinux` for the SELinux flavor; lockdown should show `[confidentiality]`. Confirm snapd's reported sandbox features and the snap's confinement mode. Classic and devmode snaps do not provide strict confinement. See the official [snap confinement documentation](https://snapcraft.io/docs/explanation/security/snap-confinement/) and [security policies](https://snapcraft.io/docs/explanation/security/security-policies/).
-
-The SELinux kernel does not provide an AppArmor sandbox for snaps. A container shares the host kernel and cannot activate AppArmor alongside an exclusive SELinux host. A separately booted kernel or VM is needed to use the AppArmor flavor while retaining a SELinux host.
+The active LSM list should include `apparmor` for the AppArmor flavor, or `selinux` for the SELinux flavor; lockdown should show `[confidentiality]`. Confirm that the selected LSM's policies are loaded and enforcing.
 
 ## Configuration syntax and build process
 
@@ -143,7 +137,7 @@ Both real builds completed successfully on November 17, 2026, using 10 detected 
 
 The fixture suite passed all 20 tests. Both ELF images contain kCFI/IBT sections, and OpenSSL verified every exported module signature against its corresponding kernel's public certificate. The local build log is `build/dual-build.log`.
 
-The environment overrides are unnecessary when dependencies are installed in system paths. Compile-time and artifact verification do not test boot behavior, loaded policies, or snap confinement on a running system.
+The environment overrides are unnecessary when dependencies are installed in system paths. Compile-time and artifact verification do not test boot behavior or policy enforcement on a running system.
 
 ## License
 
