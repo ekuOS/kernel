@@ -82,12 +82,39 @@ Logs include elapsed seconds and stage labels. In a terminal, information is cya
 ## Development checks
 
 ```console
-dart format --output=none --set-exit-if-changed build.dart test/build_test.dart
-dart analyze build.dart test/build_test.dart
+dart format --output=none --set-exit-if-changed build.dart test/
+dart analyze build.dart test/
 dart run test/build_test.dart
 ```
 
 Tests are written entirely in Dart. They create a small Makefile and C source in a temporary directory and exercise the build pipeline with real Git, make, patch, and a C compiler. Clone tests use a local Git repository with two tagged revisions and require no network access. Kconfig dependency resolution is simulated by a Dart fixture. These tests do not compile a complete Linux kernel.
+
+After building the real x86_64 kernel with `eku.conf`, run the optional integration verifier:
+
+```console
+dart run test/verify_kernel.dart
+dart run test/verify_kernel.dart build out eku.conf
+```
+
+This check requires OpenSSL and GNU readelf. It verifies every profile override, artifact sizes and copied contents, the kCFI/IBT ELF sections, and the PKCS#7 signature of each exported module using the exported public certificate. It also confirms that the signed payload matches the original compiled module and that the private key was not exported.
+
+## Verified kernel build
+
+On November 17, 2026, the following configuration completed a real kernel build:
+
+- Source tag: `v7.4-rc3`, commit `aebb7274476403040d582c61478df8f4a7bf9cd3`
+- Kernel release: `7.4.0-rc3-eku`, based on `x86_64_defconfig`
+- Compiler/linker: Clang 22.1.8 and LLD 22.1.8 on Fedora 44
+- Parallelism: 10 jobs, using Dart's default detected processor count
+- Results: all 91 Kconfig overrides verified, 22 exported artifacts, and 12 cryptographically verified module signatures
+
+The source was cloned from the Torvalds GitHub mirror. Missing build dependencies were downloaded as Fedora RPMs and extracted into `/tmp/ekuos-build-tools`, without a system-wide installation. The final build command in that environment was:
+
+```console
+env PATH="/tmp/ekuos-build-tools/usr/bin:$PATH" LD_LIBRARY_PATH=/tmp/ekuos-build-tools/usr/lib64 BISON_PKGDATADIR=/tmp/ekuos-build-tools/usr/share/bison PKG_CONFIG_PATH=/tmp/ekuos-build-tools/usr/lib64/pkgconfig dart run build.dart --config eku.conf --tag v7.4-rc3 --arch x86_64
+```
+
+For a normal installation with all dependencies available in the system paths, the environment overrides are unnecessary. The generated image is `out/bzImage`; the final resolved configuration is `out/.config`, and build metadata is in `out/build-info.json`. The local build log is `build/build.log`. Compilation and artifact verification succeeded; boot and runtime behavior have not been tested.
 
 ## License
 
