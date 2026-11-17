@@ -35,12 +35,14 @@ A missing or empty source directory is cloned automatically using `git clone --d
 ## ekuOS hardening profile
 
 ```console
-dart run build.dart --config eku.conf --arch x86_64 --jobs 4
+dart run build.dart --config eku.conf --arch x86_64
 ```
 
 `eku.conf` selects Clang/LLVM with `LLVM=1`, which the builder passes to every make invocation rather than adding it to `.config`. You can also select this toolchain with `--llvm`. Install Clang, LLD, and LLVM utilities, plus the usual kernel build dependencies such as flex, bison, bc, OpenSSL development headers, and libelf development headers.
 
-The profile enables enforced kCFI, x86 kernel IBT, CPU mitigations, KASLR and stack-offset randomization, strong stack protection, strict memory permissions, fortified copies, hardened slab allocation, zero initialization, list corruption checks, seccomp, Landlock, Yama, SafeSetID, SELinux, and integrity lockdown. kCFI uses `CONFIG_CFI_CLANG`; it does not require LTO on modern kernels. The profile is intended for x86_64, and every override must survive Kconfig dependency resolution before compilation begins.
+The profile targets Linux 7.4 on x86_64 and enables enforced kCFI, x86 kernel IBT, CPU mitigations, KASLR and stack-offset randomization, strong stack protection, strict memory permissions, fortified copies, hardened slab allocation, zero initialization, list corruption checks, seccomp, Landlock, Yama, SafeSetID, SELinux, and integrity lockdown. On this kernel, kCFI uses `CONFIG_CFI` (the previous `CONFIG_CFI_CLANG` is transitional); it does not require LTO. `CONFIG_CFI_AUTO_DEFAULT=n` selects kCFI at boot rather than automatic FineIBT selection. Every override must survive Kconfig dependency resolution before compilation begins. Other kernel versions may require different symbol names.
+
+Parallelism defaults to Dart's detected processor count. Omit `--jobs` to use all detected CPUs; supply it only to override that default.
 
 These choices have runtime effects: zeroing memory on free adds overhead, lockdown restricts privileged kernel access, and disabling hibernation, kexec, `/dev/mem`, and legacy TIOCSTI removes those interfaces. SELinux requires an appropriate userspace policy for a complete system. This profile builds a kernel; it does not install it, configure a bootloader, or test boot/runtime behavior.
 
