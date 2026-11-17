@@ -78,6 +78,8 @@ The shared profile enables Clang/LLVM, enforced kCFI, x86 IBT, CPU mitigations, 
 
 `LLVM=1` is a build setting, passed to every make invocation. `--llvm` also selects it. Linux 7.4 uses `CONFIG_CFI`; the older `CONFIG_CFI_CLANG` is transitional. kCFI does not require LTO. `CONFIG_CFI_AUTO_DEFAULT=n` selects kCFI instead of automatic FineIBT selection at boot.
 
+The common profile enables W+X memory-permission checks with `CONFIG_DEBUG_WX`, as used by Linux 7.3. The builder also supports the `CONFIG_CHECK_WX` name used by Linux 7.4: it reads the target source's Kconfig definitions and translates between these two known aliases when exactly one is defined. The effective exported profile records the symbol actually used. Its resolved value must still match the request; unknown settings and dependency failures remain errors.
+
 Both profiles force `CONFIG_LOCK_DOWN_KERNEL_FORCE_CONFIDENTIALITY=y`, with the `NONE` and `INTEGRITY` choices disabled. Confidentiality mode includes integrity restrictions and additionally restricts interfaces exposing kernel secrets. Some debugging, tracing, and performance-monitoring operations will be unavailable. Other tradeoffs include memory-zeroing and checking overhead, disabled hibernation/kexec/`/dev/mem`, and no legacy vsyscall mapping.
 
 In the SELinux flavor, development/permissive support and the `selinux=0` boot parameter are disabled. A labeled filesystem and an appropriate enforcing userspace policy are required. The AppArmor flavor enables policy verification and introspection, but its userspace policies must still be installed and loaded.
@@ -129,12 +131,15 @@ dart format --output=none --set-exit-if-changed build.dart test/
 dart analyze build.dart test/
 dart run test/build_test.dart
 dart run test/clean_test.dart
+dart run test/profile_compatibility_test.dart
 dart run test/verify_kernel.dart
 ```
 
 The fixture suite uses real Git, make, patch, and a C compiler in temporary directories; it simulates Kconfig with Dart and requires no network. It covers both-flavor isolation, per-flavor selection, configuration merging, artifact export, and failure propagation.
 
 The cleanup suite uses temporary directories to check real deletion, dry runs, source preservation, legacy directory recognition, custom and nested paths, protected inputs, and symlink handling. It does not remove the workspace's source or build artifacts.
+
+The profile compatibility suite checks both W+X symbol names, preserved values, conflicting requests, and strict handling of missing or ambiguous source definitions.
 
 The optional real-build verifier checks both default flavor directories. It requires OpenSSL and GNU readelf, verifies all effective profile values, default confidentiality lockdown, exclusive LSM selection, file sizes and copied contents, kCFI/IBT ELF sections, and every exported module's PKCS#7 signature against its flavor's public certificate. It confirms that module payloads match the original compiled modules and that private keys were not exported. For custom directories:
 
