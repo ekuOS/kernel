@@ -9,8 +9,8 @@ const usage = '''Linux kernel builder (Dart SDK 3+)
 Usage: dart run build.dart [options]
 
   --source PATH        Source directory (default: linux; cloned if absent/empty)
-  --tag TAG            Clone an exact tag; default: upstream default branch HEAD
-  --repo URL           Git repository (default: official torvalds/linux)
+  --tag TAG            Clone an exact tag; default: latest stable release tag
+  --repo URL           Git repository (default: official stable/linux)
   --config PATH        Common overrides (default: eku.conf)
   --flavor NAME        both (default), se, aa, or custom (single generic build)
   --patches PATH       Patch directory (default: patches)
@@ -40,7 +40,7 @@ class BuildFailure implements Exception {
 class Options {
   String source = 'linux';
   String repo =
-      'https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git';
+      'https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git';
   String? tag;
   String config = 'eku.conf';
   String flavor = 'both';
@@ -317,9 +317,41 @@ Future<void> applyPatches(
   }
 }
 
+String latestStableTag(String refs) {
+  final releases = <String, List<int>>{};
+  final pattern = RegExp(r'^refs/tags/(v([0-9]+)\.([0-9]+)(?:\.([0-9]+))?)$');
+  for (final line in const LineSplitter().convert(refs)) {
+    final fields = line.trim().split(RegExp(r'\s+'));
+    if (fields.length != 2) continue;
+    final match = pattern.firstMatch(fields[1]);
+    if (match != null) {
+      releases[match[1]!] = [
+        int.parse(match[2]!),
+        int.parse(match[3]!),
+        int.parse(match[4] ?? '0'),
+      ];
+    }
+  }
+  if (releases.isEmpty) {
+    throw BuildFailure(
+      'No stable release tags (vMAJOR.MINOR[.PATCH]) found; '
+      'specify --tag explicitly for another revision',
+    );
+  }
+  final tags = releases.keys.toList()
+    ..sort((a, b) {
+      for (var i = 0; i < 3; i++) {
+        final order = releases[a]![i].compareTo(releases[b]![i]);
+        if (order != 0) return order;
+      }
+      return a.compareTo(b);
+    });
+  return tags.last;
+}
+
 Future<void> prepareSource(Options options, Runner runner) async {
   final source = Directory(options.source).absolute;
-  final tag = options.tag;
+  var tag = options.tag;
   if (tag != null) {
     final valid = await Process.run('git', [
       'check-ref-format',
@@ -331,13 +363,30 @@ Future<void> prepareSource(Options options, Runner runner) async {
   }
   final exists = await source.exists();
   if (!exists || await source.list().isEmpty) {
-    runner.log.info('Cloning ${tag == null ? "upstream HEAD" : "tag $tag"}');
+    if (tag == null) {
+      runner.log.info('Resolving latest stable release from ${options.repo}');
+      final refs = await Process.run('git', [
+        'ls-remote',
+        '--tags',
+        '--refs',
+        '--',
+        options.repo,
+      ]);
+      if (refs.exitCode != 0) {
+        throw BuildFailure('Unable to list release tags: ${refs.stderr}');
+      }
+      tag = latestStableTag(refs.stdout as String);
+      runner.log.ok('Selected latest stable release: $tag');
+    }
+    options.tag = tag;
+    runner.log.info('Cloning tag $tag');
     await runner.run('git', [
       'clone',
       '--depth',
       '1',
       '--single-branch',
-      if (tag != null) ...['--branch', tag],
+      '--branch',
+      tag,
       '--',
       options.repo,
       source.path,

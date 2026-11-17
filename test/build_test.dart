@@ -80,6 +80,27 @@ Future<void> main(List<String> args) async {
         check(error.message.contains(':2:'), 'Missing line number');
       }
     });
+    await test('stable release selection sorts numeric versions and excludes prereleases', () async {
+      final tag = builder.latestStableTag('''
+aaaa refs/tags/v7.9.99
+bbbb refs/tags/v7.10
+cccc refs/tags/v7.10.2
+dddd refs/tags/v7.10.10
+eeee refs/tags/v8.0-rc1
+ffff refs/tags/v7.11-rc9
+1111 refs/tags/v7.10.11-test
+2222 refs/tags/v7.10.11^{}
+3333 refs/heads/v99.0
+''');
+      check(tag == 'v7.10.10', 'Selected an older or prerelease tag: $tag');
+      check(
+        builder.latestStableTag('aaaa refs/tags/v8.0\n') == 'v8.0',
+        'Formal major release was rejected',
+      );
+      await rejects(() async {
+        builder.latestStableTag('aaaa refs/tags/v9.0-rc1\n');
+      }, 'Prerelease-only repository was accepted');
+    });
     await test(
       'profile selects LLVM without adding a Kconfig symbol',
       () async {
@@ -443,11 +464,17 @@ fail:
     await git(['init', '-b', 'main']);
     await git(['add', '.']);
     await git(['commit', '-m', 'Initial fixture']);
-    await git(['tag', 'vtest-one']);
+    await git(['tag', 'v7.9']);
     await File('${upstream.path}/latest.txt').writeAsString('latest commit\n');
     await git(['add', '.']);
     await git(['commit', '-m', 'Latest fixture']);
-    await git(['tag', 'vtest-two']);
+    await git(['tag', 'v7.10.2']);
+    await git(['tag', '-a', '--no-sign', '-m', 'Stable fixture', 'v7.10.10']);
+    await File('${upstream.path}/candidate.txt')
+        .writeAsString('release candidate\n');
+    await git(['add', '.']);
+    await git(['commit', '-m', 'Unreleased candidate']);
+    await git(['tag', 'v7.11-rc1']);
     final latestClone = '${root.path}/clone-latest';
     final taggedClone = '${root.path}/clone-tag';
     List<String> cloneArgs(String path) => [
@@ -460,28 +487,39 @@ fail:
       '--artifacts',
       '$path-artifacts',
     ];
-    await test('clone upstream HEAD, apply patches and compile', () async {
-      final result = await run(cloneArgs(latestClone));
-      check(result.exitCode == 0, '${result.stdout}\n${result.stderr}');
-      check(
-        await File('$latestClone/latest.txt').exists(),
-        'Did not clone HEAD',
-      );
-      check(
-        (await Process.run('$latestClone-out/kernel-demo', [])).exitCode == 7,
-        'Cloned source was not patched and compiled',
-      );
-      final shallow = await Process.run('git', [
-        '-C',
-        latestClone,
-        'rev-parse',
-        '--is-shallow-repository',
-      ]);
-      check(
-        shallow.stdout.toString().trim() == 'true',
-        'Clone was not shallow',
-      );
-    });
+    await test(
+      'clone the latest stable tag instead of release-candidate HEAD',
+      () async {
+        final result = await run(cloneArgs(latestClone));
+        check(result.exitCode == 0, '${result.stdout}\n${result.stderr}');
+        check(
+          await File('$latestClone/latest.txt').exists() &&
+              !await File('$latestClone/candidate.txt').exists(),
+          'Did not clone the latest stable release',
+        );
+        final metadata = jsonDecode(
+          await File('$latestClone-artifacts/build-info.json').readAsString(),
+        ) as Map<String, dynamic>;
+        check(
+          metadata['tag'] == 'v7.10.10',
+          'Resolved release tag is missing from metadata',
+        );
+        check(
+          (await Process.run('$latestClone-out/kernel-demo', [])).exitCode == 7,
+          'Cloned source was not patched and compiled',
+        );
+        final shallow = await Process.run('git', [
+          '-C',
+          latestClone,
+          'rev-parse',
+          '--is-shallow-repository',
+        ]);
+        check(
+          shallow.stdout.toString().trim() == 'true',
+          'Clone was not shallow',
+        );
+      },
+    );
     await test(
       'both flavors share one clone and one patch application',
       () async {
@@ -490,7 +528,7 @@ fail:
         final output = result.stdout.toString();
         check(result.exitCode == 0, '$output\n${result.stderr}');
         check(
-          'Cloning upstream HEAD'.allMatches(output).length == 1 &&
+          'Cloning tag v7.10.10'.allMatches(output).length == 1 &&
               'Applied:'.allMatches(output).length == 2,
           'Source preparation repeated for each flavor',
         );
@@ -506,33 +544,32 @@ fail:
         }
       },
     );
-    await test('clone and reuse an exact tag instead of latest HEAD', () async {
-      final args = [...cloneArgs(taggedClone), '--tag', 'vtest-one'];
-      for (var i = 0; i < 2; i++) {
-        final result = await run(args);
-        check(result.exitCode == 0, '${result.stdout}\n${result.stderr}');
+    await test(
+      'clone and reuse an explicitly selected older release tag',
+      () async {
+        final args = [...cloneArgs(taggedClone), '--tag', 'v7.9'];
+        for (var i = 0; i < 2; i++) {
+          final result = await run(args);
+          check(result.exitCode == 0, '${result.stdout}\n${result.stderr}');
+          check(
+            result.stdout.toString().contains('Verified tag v7.9'),
+            'Tag was not verified',
+          );
+        }
         check(
-          result.stdout.toString().contains('Verified tag vtest-one'),
-          'Tag was not verified',
+          !await File('$taggedClone/latest.txt').exists(),
+          'Cloned wrong revision',
         );
-      }
-      check(
-        !await File('$taggedClone/latest.txt').exists(),
-        'Cloned wrong revision',
-      );
-      check(
-        await File('$taggedClone-out/kernel-demo').exists(),
-        'Tag was not built',
-      );
-    });
+        check(
+          await File('$taggedClone-out/kernel-demo').exists(),
+          'Tag was not built',
+        );
+      },
+    );
     await test(
       'tag mismatch preserves the existing checkout and stops',
       () async {
-        final result = await run([
-          ...cloneArgs(latestClone),
-          '--tag',
-          'vtest-one',
-        ]);
+        final result = await run([...cloneArgs(latestClone), '--tag', 'v7.9']);
         check(
           result.exitCode != 0 &&
               result.stderr.toString().contains('does not match tag'),
@@ -544,6 +581,26 @@ fail:
         );
       },
     );
+    await test('explicit release-candidate tags remain supported', () async {
+      final path = '${root.path}/clone-rc';
+      final result = await run([...cloneArgs(path), '--tag', 'v7.11-rc1']);
+      check(
+        result.exitCode == 0 && await File('$path/candidate.txt').exists(),
+        '${result.stdout}\n${result.stderr}',
+      );
+    });
+    await test('no stable tags fails without falling back to HEAD', () async {
+      final bare = '${root.path}/no-stable.git';
+      await git(['init', '--bare', bare]);
+      final path = '${root.path}/clone-no-stable';
+      final result = await run([...cloneArgs(path), '--repo', bare]);
+      check(
+        result.exitCode != 0 &&
+            result.stderr.toString().contains('No stable release tags') &&
+            !await Directory(path).exists(),
+        'Missing stable release did not stop cloning',
+      );
+    });
     await test('a branch name is not accepted as an exact tag', () async {
       final path = '${root.path}/clone-branch';
       final result = await run([...cloneArgs(path), '--tag', 'main']);

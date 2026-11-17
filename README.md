@@ -13,7 +13,7 @@ Both kernels default to **confidentiality lockdown**. SELinux remains the primar
 
 - Dart SDK 3.0 or later; no pub packages or Bash/Python helper scripts are needed.
 - Git, GNU make, GNU patch, Clang 22 or later, LLD, LLVM utilities, flex, bison, bc, OpenSSL development headers, and libelf development headers.
-- An x86_64 Linux source tree compatible with the supplied Linux 7.4 profiles, or network access to clone it.
+- An x86_64 Linux source tree compatible with the supplied hardening profiles, or network access to clone it.
 
 External commands are launched directly with argument lists. The kernel's own build system and native signing utility are used for compilation and module signing.
 
@@ -21,7 +21,7 @@ External commands are launched directly with argument lists. The kernel's own bu
 
 ```console
 dart run build.dart
-dart run build.dart --tag v7.4-rc3 --arch x86_64
+dart run build.dart --arch x86_64
 dart run build.dart --flavor se
 dart run build.dart --flavor aa
 dart run build.dart --help
@@ -49,9 +49,11 @@ dart run build.dart --flavor custom --config config.txt --arch arm64 --llvm --ta
 
 ## Source and patches
 
-A missing or empty source directory is shallow-cloned from the official Torvalds Linux repository using `git clone --depth 1 --single-branch`. Without `--tag`, the clone uses upstream default branch HEAD. `--tag TAG` selects an exact tag; branch names are rejected as tag selections. `--repo URL` selects a mirror or a local repository.
+A missing or empty source directory is shallow-cloned from the official stable Linux repository (`https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git`). Without `--tag`, the builder lists remote tags, accepts only formal releases named `vMAJOR.MINOR` or `vMAJOR.MINOR.PATCH`, and selects the greatest numeric version, including maintenance releases. Release candidates and other suffixes are excluded. It then runs `git clone --depth 1 --single-branch --branch TAG`. A lookup failure or a repository without matching releases stops the build; there is no fallback to a development branch.
 
-Existing source trees are reused without fetching, pulling, resetting, or switching revisions. With `--tag`, the existing local tag must resolve to HEAD. Use a new source directory to change revisions or obtain a fresh upstream HEAD.
+`--tag TAG` overrides automatic selection with an exact tag, including an rc tag when explicitly requested. Branch names are rejected as tag selections. `--repo URL` selects a mirror or a local repository and applies the same default release-tag selection to that repository. The resolved tag is recorded in each flavor's `build-info.json`.
+
+Existing source trees are reused without fetching, pulling, resetting, or switching revisions, including previously cloned development versions. With `--tag`, the existing local tag must resolve to HEAD. Use a new source directory to clone the current stable release or change revisions.
 
 Files ending in `.patch` or `.diff` directly inside `patches/` are applied in filename order before either flavor builds. Use names such as `001-name.patch` with `a/` and `b/` paths for `patch -p1`. Each patch is dry-run first, and a successful reverse dry run identifies an already applied patch. Later patches that change the same lines can prevent this detection. Applied patches remain in the source tree if a later step fails.
 
@@ -122,7 +124,7 @@ The optional real-build verifier checks both default flavor directories. It requ
 dart run test/verify_kernel.dart build/linux-eku-se out/linux-eku-se out/linux-eku-se/build-profile.conf
 ```
 
-Builds use Linux tag `v7.4-rc3` at commit `aebb7274476403040d582c61478df8f4a7bf9cd3`, with Clang/LLD 22.1.8 on Fedora 44. Missing dependencies in this workspace were extracted from Fedora RPMs to `/tmp/ekuos-build-tools`. With those temporary tools, run:
+The recorded builds below used an explicit `--tag v7.4-rc3` at commit `aebb7274476403040d582c61478df8f4a7bf9cd3`, with Clang/LLD 22.1.8 on Fedora 44. This historical test revision does not set the default clone target. Missing dependencies in this workspace were extracted from Fedora RPMs to `/tmp/ekuos-build-tools`. To reproduce those recorded builds with the temporary tools, run:
 
 ```console
 env PATH="/tmp/ekuos-build-tools/usr/bin:$PATH" LD_LIBRARY_PATH=/tmp/ekuos-build-tools/usr/lib64 BISON_PKGDATADIR=/tmp/ekuos-build-tools/usr/share/bison PKG_CONFIG_PATH=/tmp/ekuos-build-tools/usr/lib64/pkgconfig dart run build.dart --tag v7.4-rc3 --arch x86_64
@@ -135,7 +137,7 @@ Both real builds completed successfully on November 17, 2026, using 10 detected 
 | `7.4.0-rc3-eku-se` | 112 | 22 | 12 | confidentiality |
 | `7.4.0-rc3-eku-aa` | 135 | 22 | 12 | confidentiality |
 
-The fixture suite passed all 20 tests. Both ELF images contain kCFI/IBT sections, and OpenSSL verified every exported module signature against its corresponding kernel's public certificate. The local build log is `build/dual-build.log`.
+The fixture suite also checks numeric stable-tag selection, exclusion of release candidates, and failure without a stable release. Both previously built ELF images contain kCFI/IBT sections, and OpenSSL verified every exported module signature against its corresponding kernel's public certificate. The local build log is `build/dual-build.log`.
 
 The environment overrides are unnecessary when dependencies are installed in system paths. Compile-time and artifact verification do not test boot behavior or policy enforcement on a running system.
 
