@@ -59,3 +59,7 @@ dart run test/build_test.dart
 ```
 
 Tests are written entirely in Dart. They create a small Makefile and C source in a temporary directory and exercise the build pipeline with real make, patch, and a C compiler. Kconfig dependency resolution is simulated by a Dart fixture. These tests do not compile a complete Linux kernel.
+
+## License
+
+This build tooling is licensed under the [MIT License](LICENSE). Linux kernel sources and third-party patches retain their respective licenses.
