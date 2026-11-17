@@ -373,7 +373,9 @@ fail:
         check(
           'Generating defaults:'.allMatches(result.stdout.toString()).length ==
                   2 &&
-              'Applied:'.allMatches(result.stdout.toString()).isEmpty,
+              'Applied:'.allMatches(result.stdout.toString()).isEmpty &&
+              'Already applied:'.allMatches(result.stdout.toString()).length ==
+                  2,
           'Unexpected flavor execution or repeated patch application',
         );
       },
@@ -480,6 +482,30 @@ fail:
         'Clone was not shallow',
       );
     });
+    await test(
+      'both flavors share one clone and one patch application',
+      () async {
+        final path = '${root.path}/clone-dual';
+        final result = await run([...cloneArgs(path), '--flavor', 'both']);
+        final output = result.stdout.toString();
+        check(result.exitCode == 0, '$output\n${result.stderr}');
+        check(
+          'Cloning upstream HEAD'.allMatches(output).length == 1 &&
+              'Applied:'.allMatches(output).length == 2,
+          'Source preparation repeated for each flavor',
+        );
+        for (final flavor in ['se', 'aa']) {
+          check(
+            (await Process.run(
+                  '$path-artifacts/linux-eku-$flavor/vmlinux',
+                  [],
+                )).exitCode ==
+                7,
+            'Flavor $flavor did not compile the patched source',
+          );
+        }
+      },
+    );
     await test('clone and reuse an exact tag instead of latest HEAD', () async {
       final args = [...cloneArgs(taggedClone), '--tag', 'vtest-one'];
       for (var i = 0; i < 2; i++) {
