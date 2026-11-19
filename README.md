@@ -17,6 +17,10 @@ Both kernels default to **confidentiality lockdown**. SELinux remains the primar
 
 External commands are launched directly with argument lists. The kernel's own build system and native signing utility are used for compilation and module signing.
 
+## Gentoo binhost
+
+GitHub Actions builds and tests both kernel flavors as Portage packages and publishes signed GPKGs to GitHub Pages. See [Gentoo binhost setup](packaging/gentoo/README.md) for the required pre-push settings and installation instructions.
+
 ## Usage
 
 ```console

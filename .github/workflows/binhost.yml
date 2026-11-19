@@ -1,0 +1,105 @@
+name: Publish Gentoo kernel binhost
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Sign and publish to GitHub Pages (main only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gentoo-kernel-binhost
+  cancel-in-progress: false
+
+jobs:
+  build-binpkg:
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && !inputs.publish)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+          problem-matcher: false
+
+      - name: Verify Dart scripts
+        run: |
+          dart format --output=none --set-exit-if-changed build.dart test/ packaging/gentoo/
+          dart analyze build.dart test/ packaging/gentoo/
+          dart run test/build_test.dart
+          dart run test/clean_test.dart
+          dart run test/profile_compatibility_test.dart
+          dart compile exe packaging/gentoo/binhost.dart -o "$RUNNER_TEMP/ekuos-binhost"
+
+      - name: Prepare Gentoo container
+        run: |
+          docker build --pull -f packaging/gentoo/Containerfile \
+            -t ekuos-kernel-binhost packaging/gentoo
+
+      - name: Build and test both Gentoo binpkgs
+        run: |
+          dart_sdk="$(dirname "$(dirname "$(realpath "$(command -v dart)")")")"
+          mkdir "$RUNNER_TEMP/binhost"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/input:ro" \
+            -v "$RUNNER_TEMP/binhost:/output" \
+            -v "$RUNNER_TEMP/ekuos-binhost:/usr/local/bin/ekuos-binhost:ro" \
+            -v "$dart_sdk:/opt/dart-sdk:ro" \
+            ekuos-kernel-binhost /usr/local/bin/ekuos-binhost build
+
+      - name: Sign GPKGs and regenerate their Portage index
+        if: github.event_name == 'push' || inputs.publish
+        env:
+          BINHOST_GPG_PRIVATE_KEY: ${{ secrets.BINHOST_GPG_PRIVATE_KEY }}
+          BINHOST_GPG_PASSPHRASE: ${{ secrets.BINHOST_GPG_PASSPHRASE }}
+        run: |
+          if [[ -z "$BINHOST_GPG_PRIVATE_KEY" ]]; then
+            echo '::error::Set the BINHOST_GPG_PRIVATE_KEY Actions secret before publishing.'
+            exit 1
+          fi
+          if [[ "$BINHOST_GPG_PASSPHRASE" == *$'\n'* || "$BINHOST_GPG_PASSPHRASE" == *$'\r'* ]]; then
+            echo '::error::BINHOST_GPG_PASSPHRASE must be a single line.'
+            exit 1
+          fi
+          printf '%s\n%s\n' "$BINHOST_GPG_PASSPHRASE" "$BINHOST_GPG_PRIVATE_KEY" |
+            docker run --rm -i --network=none \
+              -v "$GITHUB_WORKSPACE:/input:ro" \
+              -v "$RUNNER_TEMP/binhost:/output" \
+              -v "$RUNNER_TEMP/ekuos-binhost:/usr/local/bin/ekuos-binhost:ro" \
+              ekuos-kernel-binhost /usr/local/bin/ekuos-binhost sign
+
+      - name: Verify publication checksums
+        if: github.event_name == 'push' || inputs.publish
+        working-directory: ${{ runner.temp }}/binhost/amd64/23.0/no-multilib/systemd
+        run: sha256sum --check SHA256SUMS
+
+      - name: Upload signed binhost to Pages
+        if: github.event_name == 'push' || inputs.publish
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: ${{ runner.temp }}/binhost
+
+  deploy:
+    needs: build-binpkg
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.publish)
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy binhost to Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
