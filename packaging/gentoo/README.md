@@ -1,35 +1,15 @@
 # Gentoo kernel binhost
 
-The binhost publishes `sys-kernel/linux-eku-se` and `sys-kernel/linux-eku-aa` as signed GPKGs for Gentoo `default/linux/amd64/23.0/no-multilib/systemd` (`x86_64-pc-linux-gnu`). The initial release is Linux 7.3.5. The two flavors can be installed together; each upstream kernel version uses a separate Portage slot and distinct `/boot` and `/usr/lib/modules` paths. The published repository contains only the current version of each flavor.
-
-CI builds with the repository's `build.dart`, the default `eku.conf`, and Clang/LLD. It verifies the configured hardening and module signatures, installs both binary packages in a disposable Gentoo container, and checks the installed kernel and module files. It also requires built-in Btrfs, NVMe, EFI stub, firmware framebuffer console, and initramfs support for Civilight. Only then does a fresh offline container sign the GPKGs and rebuild the `Packages` index. Neither these checks nor the Portage install boot the kernel. The OpenPGP key authenticates the packages; each kernel uses its own generated key to sign its modules.
-
-## Before pushing
-
-1. In **Settings → Pages → Build and deployment → Source**, select **GitHub Actions**. If the `github-pages` environment has deployment branch rules, allow `main`.
-2. Generate a dedicated OpenPGP signing key and record its full fingerprint in a trusted place separate from Pages:
-
-   ```sh
-   gpg --quick-generate-key 'ekuOS kernel binhost' ed25519 sign 1y
-   gpg --list-secret-keys --fingerprint 'ekuOS kernel binhost'
-   ```
-
-3. Under **Settings → Secrets and variables → Actions**, add a repository secret named `BINHOST_GPG_PRIVATE_KEY` containing **one ASCII-armored private key**. Or set `fingerprint` to the full fingerprint and run:
-
-   ```sh
-   gpg --armor --export-secret-keys "$fingerprint" |
-     gh secret set BINHOST_GPG_PRIVATE_KEY --repo ekuOS/kernel
-   ```
-
-4. If the key is protected by a passphrase, add `BINHOST_GPG_PASSPHRASE` as a repository secret (one line, no line break). Leave it unset otherwise.
-
-No Actions variables or custom deploy token are required. Pushes to `main` build and publish. Once the workflow is registered on the default branch, **Run workflow** with `publish` unchecked runs the build and install checks without secrets, including on other branches. Manual publishing is only allowed from `main`.
+The binhost publishes signed `sys-kernel/linux-eku-se` and `sys-kernel/linux-eku-aa`
+GPKGs for Gentoo `default/linux/amd64/23.0/no-multilib/systemd`. Both use the same
+`eku.conf` as standalone builds and can be installed together.
 
 ## Configure Portage
 
-Use the actual Pages deployment URL plus `amd64/23.0/no-multilib/systemd/`; the default URL is shown below. Portage also needs the small matching source overlay for package metadata.
-
-Download `signing-key.asc`, run `gpg --show-keys --fingerprint signing-key.asc`, and compare with the full fingerprint provided by the maintainer **through a separate trusted channel**. Only if it matches, set `fingerprint` to that value and configure Portage to trust the key:
+Download `signing-key.asc` from the `sync-uri` below. Compare its full
+fingerprint (`gpg --show-keys --fingerprint signing-key.asc`) with the value
+provided by the maintainer **through a separate trusted channel**. If it
+matches, set `fingerprint` to that value and import the key:
 
 ```sh
 sudo getuto
@@ -78,10 +58,21 @@ sudo emerge --pretend --verbose --getbinpkg --usepkgonly --binpkg-respect-use=y 
   sys-kernel/linux-eku-se::ekuos-kernel
 ```
 
-Replace `--pretend --verbose` with `--ask` to install, or select `sys-kernel/linux-eku-aa::ekuos-kernel` for AppArmor. The package installs a versioned kernel image, config, `System.map` and signed modules. It does not generate an initramfs, change your bootloader, sign the image for UEFI Secure Boot, or install an LSM policy. Prepare those separately as needed and keep a known-good boot entry for rollback.
+Replace `--pretend --verbose` with `--ask` to install, or select
+`sys-kernel/linux-eku-aa::ekuos-kernel` for AppArmor. Set up the initramfs,
+bootloader, UEFI Secure Boot signing and userspace LSM policy separately as
+needed. Keep a known-good boot entry. Replace the verified overlay on updates;
+use `--reinstall-atoms` if replacing an already installed version.
 
-## Updating the published packages
+## Publish
 
-When changing Linux versions, update `linux.sha256` using the upstream release checksum and rename both ebuilds to match. Update the two dated Gentoo container tags together. Run a build-only dispatch before publishing. Replace the client overlay with the verified `overlay.tar.gz` when updating, so its Manifests match the published distfiles. When rebuilding the same version, existing installs are not upgraded automatically; use `--reinstall-atoms` if you need the replacement. Reinstall the package as a unit so that the kernel and its modules use the same signing key.
+Before pushing, select **GitHub Actions** in **Settings → Pages** and allow
+`main` in the `github-pages` environment if restricted. In **Settings →
+Secrets and variables → Actions**, set `BINHOST_GPG_PRIVATE_KEY` to one
+dedicated ASCII-armored OpenPGP private key. If protected, set
+`BINHOST_GPG_PASSPHRASE` to its single-line passphrase.
 
-The publication includes the upstream Linux tarball and exact ekuOS build inputs in `distfiles/` along with the overlay and its Portage Manifests. Building from source, unlike installing the GPKG, requires a Dart SDK at `/opt/dart-sdk`.
+Pushes to `main` publish after the build and install checks pass. A manual
+run with `publish` unchecked only builds and tests. To change Linux versions,
+update `linux.sha256` and rename both ebuilds. Source builds require Dart at
+`/opt/dart-sdk`; published build inputs are in `distfiles/`.
