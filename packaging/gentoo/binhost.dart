@@ -148,6 +148,9 @@ Future<void> verifyInstalled(String version, String flavor) async {
     'BLK_DEV_NVME',
     'BTRFS_FS',
     'EFI_STUB',
+    'DRM_EFIDRM',
+    'DRM_FBDEV_EMULATION',
+    'FRAMEBUFFER_CONSOLE',
     'BLK_DEV_INITRD',
   ]) {
     check(

@@ -2,7 +2,7 @@
 
 The binhost publishes `sys-kernel/linux-eku-se` and `sys-kernel/linux-eku-aa` as signed GPKGs for Gentoo `default/linux/amd64/23.0/no-multilib/systemd` (`x86_64-pc-linux-gnu`). The initial release is Linux 7.3.5. The two flavors can be installed together; each upstream kernel version uses a separate Portage slot and distinct `/boot` and `/usr/lib/modules` paths. The published repository contains only the current version of each flavor.
 
-CI builds with the repository's `build.dart`, the default `eku.conf`, and Clang/LLD. It verifies the configured hardening and module signatures, installs both binary packages in a disposable Gentoo container, and checks the installed kernel and module files. It also requires built-in Btrfs, NVMe, EFI stub, and initramfs support for Civilight. Only then does a fresh offline container sign the GPKGs and rebuild the `Packages` index. Neither these checks nor the Portage install boot the kernel. The OpenPGP key authenticates the packages; each kernel uses its own generated key to sign its modules.
+CI builds with the repository's `build.dart`, the default `eku.conf`, and Clang/LLD. It verifies the configured hardening and module signatures, installs both binary packages in a disposable Gentoo container, and checks the installed kernel and module files. It also requires built-in Btrfs, NVMe, EFI stub, firmware framebuffer console, and initramfs support for Civilight. Only then does a fresh offline container sign the GPKGs and rebuild the `Packages` index. Neither these checks nor the Portage install boot the kernel. The OpenPGP key authenticates the packages; each kernel uses its own generated key to sign its modules.
 
 ## Before pushing
 
