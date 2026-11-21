@@ -59,6 +59,76 @@ jobs:
         working-directory: ${{ runner.temp }}/binhost/amd64/23.0/no-multilib/systemd
         run: sha256sum --check SHA256SUMS
 
+      - name: Write binhost usage page
+        if: github.event_name == 'push' || inputs.publish
+        working-directory: ${{ runner.temp }}/binhost
+        run: |
+          echo '<!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>ekuOS Gentoo kernel binhost</title>
+            <style>
+              body { font: 1rem/1.55 system-ui, sans-serif; max-width: 50rem; margin: 2rem auto; padding: 0 1rem; }
+              pre { overflow-x: auto; padding: 1rem; border: 1px solid; border-radius: .4rem; }
+            </style>
+          </head>
+          <body>
+          <main>
+            <h1>ekuOS Gentoo kernel binhost</h1>
+            <p>Signed SELinux (<code>linux-eku-se</code>) and AppArmor (<code>linux-eku-aa</code>)
+            kernels for Gentoo <code>default/linux/amd64/23.0/no-multilib/systemd</code>.</p>
+            <p><a href="amd64/23.0/no-multilib/systemd/Packages">Package index</a> ·
+            <a href="amd64/23.0/no-multilib/systemd/signing-key.asc">Signing key</a> ·
+            <a href="amd64/23.0/no-multilib/systemd/overlay.tar.gz">Source overlay</a> ·
+            <a href="amd64/23.0/no-multilib/systemd/SHA256SUMS">Checksums</a> ·
+            <a href="amd64/23.0/no-multilib/systemd/SHA256SUMS.asc">Checksum signature</a></p>
+
+            <h2>1. Verify the signing key and overlay</h2>
+            <p>Download the signing key, overlay, checksums and checksum signature from the links above.
+            Compare the output of <code>gpg --show-keys --fingerprint signing-key.asc</code>
+            with the full fingerprint obtained from the maintainer through a trusted separate channel.
+            Only if they match, set <code>fingerprint</code> to that value and run:</p>
+            <pre><code>sudo getuto
+          sudo gpg --homedir /etc/portage/gnupg --import signing-key.asc
+          printf "%s:6:\n" "$fingerprint" |
+            sudo gpg --homedir /etc/portage/gnupg --import-ownertrust
+          sudo gpg --homedir /etc/portage/gnupg --batch --check-trustdb
+          sudo gpg --homedir /etc/portage/gnupg --assert-signer "$fingerprint" \
+            --verify SHA256SUMS.asc SHA256SUMS &amp;&amp;
+            grep "  overlay[.]tar[.]gz$" SHA256SUMS | sha256sum --check -</code></pre>
+            <p>After verification succeeds, extract <code>overlay.tar.gz</code> into
+            <code>/var/db/repos/ekuos-kernel</code>. Replace the overlay with the verified archive when updating.</p>
+
+            <h2>2. Configure Portage</h2>
+            <p>Add <code>/etc/portage/repos.conf/ekuos-kernel.conf</code>:</p>
+            <pre><code>[ekuos-kernel]
+          location = /var/db/repos/ekuos-kernel
+          auto-sync = no</code></pre>
+            <p>Add the following to <code>/etc/portage/binrepos.conf</code>, or to a file inside it if it is a directory:</p>
+            <pre><code>[ekuos-kernel]
+          priority = 9999
+          sync-uri = https://ekuos.github.io/kernel/amd64/23.0/no-multilib/systemd/
+          verify-signature = true</code></pre>
+            <p>Add the desired flavor to <code>/etc/portage/package.accept_keywords</code>:</p>
+            <pre><code>sys-kernel/linux-eku-se::ekuos-kernel ~amd64
+          sys-kernel/linux-eku-aa::ekuos-kernel ~amd64</code></pre>
+
+            <h2>3. Preview and install</h2>
+            <p>Mount <code>/boot</code> first if it is a separate filesystem. Check that
+            the preview selects the <code>ekuos-kernel</code> binary:</p>
+            <pre><code>sudo emerge --pretend --verbose --getbinpkg --usepkgonly --binpkg-respect-use=y \
+            sys-kernel/linux-eku-se::ekuos-kernel</code></pre>
+            <p>Replace <code>--pretend --verbose</code> with <code>--ask</code> to install.
+            Use <code>linux-eku-aa</code> for AppArmor. Set up the initramfs, bootloader,
+            Secure Boot signing and userspace security policy separately as needed.
+            Keep a known-good boot entry.</p>
+            <p><a href="https://github.com/ekuOS/kernel">Source repository</a></p>
+          </main>
+          </body>
+          </html>' > index.html
+
       - name: Upload signed binhost to Pages
         if: github.event_name == 'push' || inputs.publish
         uses: actions/upload-pages-artifact@v5
