@@ -146,7 +146,14 @@ Future<void> verifyInstalled(String version, String flavor) async {
   final config = (await File('/boot/config-$release').readAsLines()).toSet();
   for (final option in [
     'BLK_DEV_NVME',
+    'VMD',
+    'SATA_AHCI',
+    'USB_STORAGE',
+    'VIRTIO_BLK',
+    'SCSI_VIRTIO',
+    'EXT4_FS',
     'BTRFS_FS',
+    'VFAT_FS',
     'EFI_STUB',
     'DRM_EFIDRM',
     'DRM_FBDEV_EMULATION',

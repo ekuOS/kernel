@@ -38,6 +38,8 @@ ekuos-kernel_src_compile() {
 	# The builder owns kernel configuration and flags. Do not inherit make
 	# settings that could override its Kbuild configuration or parallelism.
 	unset KCONFIG_CONFIG MAKEFLAGS
+	# Use the same checked-in eku.conf as a standalone build, then apply the
+	# selected flavor's overrides.
 	"${dart}" "${tooling}/build.dart" --arch x86_64 --source "${S}" \
 		--flavor "${flavor}" --config "${tooling}/eku.conf" \
 		--patches "${tooling}/patches" --output "${WORKDIR}/build" \
