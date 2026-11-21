@@ -42,41 +42,17 @@ jobs:
           dart compile exe packaging/gentoo/binhost.dart -o "$RUNNER_TEMP/ekuos-binhost"
 
       - name: Prepare Gentoo container
-        run: |
-          docker build --pull -f packaging/gentoo/Containerfile \
-            -t ekuos-kernel-binhost packaging/gentoo
+        run: docker build --pull -f packaging/gentoo/Containerfile -t ekuos-kernel-binhost packaging/gentoo
 
       - name: Build and test both Gentoo binpkgs
-        run: |
-          dart_sdk="$(dirname "$(dirname "$(realpath "$(command -v dart)")")")"
-          mkdir "$RUNNER_TEMP/binhost"
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE:/input:ro" \
-            -v "$RUNNER_TEMP/binhost:/output" \
-            -v "$RUNNER_TEMP/ekuos-binhost:/usr/local/bin/ekuos-binhost:ro" \
-            -v "$dart_sdk:/opt/dart-sdk:ro" \
-            ekuos-kernel-binhost /usr/local/bin/ekuos-binhost build
+        run: dart run packaging/gentoo/ci.dart build
 
       - name: Sign GPKGs and regenerate their Portage index
         if: github.event_name == 'push' || inputs.publish
         env:
           BINHOST_GPG_PRIVATE_KEY: ${{ secrets.BINHOST_GPG_PRIVATE_KEY }}
           BINHOST_GPG_PASSPHRASE: ${{ secrets.BINHOST_GPG_PASSPHRASE }}
-        run: |
-          if [[ -z "$BINHOST_GPG_PRIVATE_KEY" ]]; then
-            echo '::error::Set the BINHOST_GPG_PRIVATE_KEY Actions secret before publishing.'
-            exit 1
-          fi
-          if [[ "$BINHOST_GPG_PASSPHRASE" == *$'\n'* || "$BINHOST_GPG_PASSPHRASE" == *$'\r'* ]]; then
-            echo '::error::BINHOST_GPG_PASSPHRASE must be a single line.'
-            exit 1
-          fi
-          printf '%s\n%s\n' "$BINHOST_GPG_PASSPHRASE" "$BINHOST_GPG_PRIVATE_KEY" |
-            docker run --rm -i --network=none \
-              -v "$GITHUB_WORKSPACE:/input:ro" \
-              -v "$RUNNER_TEMP/binhost:/output" \
-              -v "$RUNNER_TEMP/ekuos-binhost:/usr/local/bin/ekuos-binhost:ro" \
-              ekuos-kernel-binhost /usr/local/bin/ekuos-binhost sign
+        run: dart run packaging/gentoo/ci.dart sign
 
       - name: Verify publication checksums
         if: github.event_name == 'push' || inputs.publish
