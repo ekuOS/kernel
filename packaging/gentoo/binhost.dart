@@ -143,6 +143,18 @@ Future<void> verifyInstalled(String version, String flavor) async {
   ]) {
     await sameFile('$reference/$source', '/boot/$target');
   }
+  final config = (await File('/boot/config-$release').readAsLines()).toSet();
+  for (final option in [
+    'BLK_DEV_NVME',
+    'BTRFS_FS',
+    'EFI_STUB',
+    'BLK_DEV_INITRD',
+  ]) {
+    check(
+      config.contains('CONFIG_$option=y'),
+      '$release requires CONFIG_$option=y',
+    );
+  }
   check(
     await File('$modules/modules.dep.bin').length() > 0,
     'Missing module dependency index',

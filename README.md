@@ -8,6 +8,7 @@ Build hardened Linux kernels using Dart as a scripting language. One command clo
 | `linux-eku-aa` | AppArmor | `-eku-aa` | `build/linux-eku-aa/` | `out/linux-eku-aa/` |
 
 Both kernels default to **confidentiality lockdown**. SELinux remains the primary system option; the AppArmor kernel provides an alternative security profile. The builder does not install kernels or change the bootloader.
+Both default builds include built-in Btrfs and NVMe support.
 
 ## Requirements
 
