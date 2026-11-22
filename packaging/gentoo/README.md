@@ -1,7 +1,7 @@
 # Gentoo kernel binhost
 
 The binhost publishes signed `sys-kernel/linux-eku-se` and `sys-kernel/linux-eku-aa`
-GPKGs for Gentoo `default/linux/amd64/23.0/no-multilib/systemd`. Both use the same
+GPKGs for Gentoo `default/linux/amd64/23.0/llvm/systemd`. Both use the same
 `eku.conf` as standalone builds and can be installed together.
 
 ## Configure Portage
@@ -40,7 +40,7 @@ Add this entry to `/etc/portage/binrepos.conf` (or a file under that directory):
 ```ini
 [ekuos-kernel]
 priority = 9999
-sync-uri = https://ekuos.github.io/kernel/amd64/23.0/no-multilib/systemd/
+sync-uri = https://ekuos.github.io/kernel/amd64/23.0/llvm/systemd/
 verify-signature = true
 ```
 

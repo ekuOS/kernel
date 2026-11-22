@@ -1,3 +1,3 @@
 FROM docker.io/gentoo/portage:20261116 AS tree
-FROM docker.io/gentoo/stage3:amd64-nomultilib-systemd-20261116
+FROM docker.io/gentoo/stage3:amd64-llvm-systemd-20261116
 COPY --from=tree /var/db/repos/gentoo/ /var/db/repos/gentoo/

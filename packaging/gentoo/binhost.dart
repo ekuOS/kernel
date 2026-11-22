@@ -5,10 +5,10 @@ import '../../build.dart' show BuildFailure, Log, Runner;
 import '../../test/verify_kernel.dart' show sameFile;
 
 const project = '/input';
-const output = '/output/amd64/23.0/no-multilib/systemd';
+const output = '/output/amd64/23.0/llvm/systemd';
 const distfiles = '$output/distfiles';
 const overlay = '/var/db/repos/ekuos-kernel';
-const profile = 'default/linux/amd64/23.0/no-multilib/systemd';
+const profile = 'default/linux/amd64/23.0/llvm/systemd';
 const flavors = ['se', 'aa'];
 final runner = Runner(Log(noColor: true));
 
@@ -159,6 +159,7 @@ Future<void> verifyInstalled(String version, String flavor) async {
     'DRM_FBDEV_EMULATION',
     'FRAMEBUFFER_CONSOLE',
     'BLK_DEV_INITRD',
+    'IA32_EMULATION',
   ]) {
     check(
       config.contains('CONFIG_$option=y'),

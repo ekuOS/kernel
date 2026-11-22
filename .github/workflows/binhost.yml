@@ -56,7 +56,7 @@ jobs:
 
       - name: Verify publication checksums
         if: github.event_name == 'push' || inputs.publish
-        working-directory: ${{ runner.temp }}/binhost/amd64/23.0/no-multilib/systemd
+        working-directory: ${{ runner.temp }}/binhost/amd64/23.0/llvm/systemd
         run: sha256sum --check SHA256SUMS
 
       - name: Write binhost usage page
@@ -78,12 +78,12 @@ jobs:
           <main>
             <h1>ekuOS Gentoo kernel binhost</h1>
             <p>Signed SELinux (<code>linux-eku-se</code>) and AppArmor (<code>linux-eku-aa</code>)
-            kernels for Gentoo <code>default/linux/amd64/23.0/no-multilib/systemd</code>.</p>
-            <p><a href="amd64/23.0/no-multilib/systemd/Packages">Package index</a> ·
-            <a href="amd64/23.0/no-multilib/systemd/signing-key.asc">Signing key</a> ·
-            <a href="amd64/23.0/no-multilib/systemd/overlay.tar.gz">Source overlay</a> ·
-            <a href="amd64/23.0/no-multilib/systemd/SHA256SUMS">Checksums</a> ·
-            <a href="amd64/23.0/no-multilib/systemd/SHA256SUMS.asc">Checksum signature</a></p>
+            kernels for Gentoo <code>default/linux/amd64/23.0/llvm/systemd</code>.</p>
+            <p><a href="amd64/23.0/llvm/systemd/Packages">Package index</a> ·
+            <a href="amd64/23.0/llvm/systemd/signing-key.asc">Signing key</a> ·
+            <a href="amd64/23.0/llvm/systemd/overlay.tar.gz">Source overlay</a> ·
+            <a href="amd64/23.0/llvm/systemd/SHA256SUMS">Checksums</a> ·
+            <a href="amd64/23.0/llvm/systemd/SHA256SUMS.asc">Checksum signature</a></p>
 
             <h2>1. Verify the signing key and overlay</h2>
             <p>Download the signing key, overlay, checksums and checksum signature from the links above.
@@ -109,7 +109,7 @@ jobs:
             <p>Add the following to <code>/etc/portage/binrepos.conf</code>, or to a file inside it if it is a directory:</p>
             <pre><code>[ekuos-kernel]
           priority = 9999
-          sync-uri = https://ekuos.github.io/kernel/amd64/23.0/no-multilib/systemd/
+           sync-uri = https://ekuos.github.io/kernel/amd64/23.0/llvm/systemd/
           verify-signature = true</code></pre>
             <p>Add the desired flavor to <code>/etc/portage/package.accept_keywords</code>:</p>
             <pre><code>sys-kernel/linux-eku-se::ekuos-kernel ~amd64

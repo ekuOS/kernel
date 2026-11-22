@@ -6,7 +6,7 @@ inherit multiprocessing
 HOMEPAGE="https://github.com/ekuOS/kernel"
 SRC_URI="
 	https://cdn.kernel.org/pub/linux/kernel/v$(ver_cut 1).x/linux-${PV}.tar.xz
-	https://ekuos.github.io/kernel/amd64/23.0/no-multilib/systemd/distfiles/ekuos-kernel-${PVR}.tar.gz
+	https://ekuos.github.io/kernel/amd64/23.0/llvm/systemd/distfiles/ekuos-kernel-${PVR}.tar.gz
 "
 S="${WORKDIR}/linux-${PV}"
 LICENSE="GPL-2"
