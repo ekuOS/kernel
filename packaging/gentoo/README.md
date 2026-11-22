@@ -1,7 +1,7 @@
 # Gentoo kernel binhost
 
 The binhost publishes signed `sys-kernel/linux-eku-se` and `sys-kernel/linux-eku-aa`
-GPKGs for Gentoo `default/linux/amd64/23.0/llvm/systemd`. Both use the same
+GPKGs for Gentoo amd64 LLVM/systemd and standard multilib/systemd. Both use the same
 `eku.conf` as standalone builds and can be installed together.
 
 ## Configure Portage
@@ -43,6 +43,10 @@ priority = 9999
 sync-uri = https://ekuos.github.io/kernel/amd64/23.0/llvm/systemd/
 verify-signature = true
 ```
+
+For Gentoo `default/linux/amd64/23.0/systemd` (standard multilib), use
+`https://ekuos.github.io/kernel/amd64/23.0/multilib/systemd/` and download its
+matching overlay. Do not mix the two profile paths.
 
 Add the flavor(s) you need to `/etc/portage/package.accept_keywords` (or a file inside it):
 

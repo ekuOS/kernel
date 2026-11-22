@@ -5,10 +5,16 @@ import '../../build.dart' show BuildFailure, Log, Runner;
 import '../../test/verify_kernel.dart' show sameFile;
 
 const project = '/input';
-const output = '/output/amd64/23.0/llvm/systemd';
-const distfiles = '$output/distfiles';
+const defaultBinhost = 'amd64/23.0/llvm/systemd';
+final binhost = Platform.environment['BINHOST_PATH'] ?? defaultBinhost;
+final output = '/output/$binhost';
+final distfiles = '$output/distfiles';
 const overlay = '/var/db/repos/ekuos-kernel';
-const profile = 'default/linux/amd64/23.0/llvm/systemd';
+final profile = switch (binhost) {
+  'amd64/23.0/multilib/systemd' => 'default/linux/amd64/23.0/systemd',
+  defaultBinhost => 'default/linux/amd64/23.0/llvm/systemd',
+  _ => throw BuildFailure('Unsupported kernel binhost path: $binhost'),
+};
 const flavors = ['se', 'aa'];
 final runner = Runner(Log(noColor: true));
 
@@ -100,6 +106,9 @@ Future<void> prepareSources(String version) async {
   }
 
   await runner.run('cp', ['-R', '$project/packaging/gentoo/overlay', overlay]);
+  final eclass = File('$overlay/eclass/ekuos-kernel.eclass');
+  final source = await eclass.readAsString();
+  await eclass.writeAsString(source.replaceFirst(defaultBinhost, binhost));
   final manifest = [
     await manifestEntry('$tooling.tar.gz'),
     await manifestEntry(linux),
@@ -453,6 +462,8 @@ Future<void> sign(String version) async {
 
 Future<void> main(List<String> args) async {
   try {
+    // Reject unknown paths in the offline signing container as well.
+    check(profile.isNotEmpty, 'Expected a supported Gentoo profile');
     switch (args.singleOrNull) {
       case 'build':
         await build(await release());

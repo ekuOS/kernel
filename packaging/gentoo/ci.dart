@@ -17,6 +17,8 @@ Future<void> runContainer({required bool sign}) async {
   final args = [
     'run',
     '--rm',
+    '-e',
+    'BINHOST_PATH',
     if (sign) ...['-i', '--network=none'],
     '-v',
     '$workspace:/input:ro',

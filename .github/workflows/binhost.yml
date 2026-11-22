@@ -22,6 +22,16 @@ jobs:
     if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && !inputs.publish)
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - flavor: llvm
+            stage3: amd64-llvm-systemd-20261116
+          - flavor: multilib
+            stage3: amd64-systemd-20261116
+    env:
+      BINHOST_PATH: amd64/23.0/${{ matrix.flavor }}/systemd
     steps:
       - uses: actions/checkout@v7
         with:
@@ -42,7 +52,7 @@ jobs:
           dart compile exe packaging/gentoo/binhost.dart -o "$RUNNER_TEMP/ekuos-binhost"
 
       - name: Prepare Gentoo container
-        run: docker build --pull -f packaging/gentoo/Containerfile -t ekuos-kernel-binhost packaging/gentoo
+        run: docker build --pull --build-arg GENTOO_STAGE3=${{ matrix.stage3 }} -f packaging/gentoo/Containerfile -t ekuos-kernel-binhost packaging/gentoo
 
       - name: Build and test both Gentoo binpkgs
         run: dart run packaging/gentoo/ci.dart build
@@ -56,11 +66,30 @@ jobs:
 
       - name: Verify publication checksums
         if: github.event_name == 'push' || inputs.publish
-        working-directory: ${{ runner.temp }}/binhost/amd64/23.0/llvm/systemd
+        working-directory: ${{ runner.temp }}/binhost/${{ env.BINHOST_PATH }}
         run: sha256sum --check SHA256SUMS
 
-      - name: Write binhost usage page
+      - name: Save signed binrepo
         if: github.event_name == 'push' || inputs.publish
+        uses: actions/upload-artifact@v7
+        with:
+          name: kernel-binhost-${{ matrix.flavor }}
+          path: ${{ runner.temp }}/binhost/
+          if-no-files-found: error
+          compression-level: 0
+
+  assemble-pages:
+    needs: build-binpkg
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.publish)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: kernel-binhost-*
+          path: ${{ runner.temp }}/binhost
+          merge-multiple: true
+
+      - name: Write binhost usage page
         working-directory: ${{ runner.temp }}/binhost
         run: |
           echo '<!doctype html>
@@ -78,12 +107,17 @@ jobs:
           <main>
             <h1>ekuOS Gentoo kernel binhost</h1>
             <p>Signed SELinux (<code>linux-eku-se</code>) and AppArmor (<code>linux-eku-aa</code>)
-            kernels for Gentoo <code>default/linux/amd64/23.0/llvm/systemd</code>.</p>
-            <p><a href="amd64/23.0/llvm/systemd/Packages">Package index</a> ·
+            kernels for Gentoo amd64 LLVM/systemd and standard multilib/systemd.</p>
+            <p>LLVM/systemd: <a href="amd64/23.0/llvm/systemd/Packages">Package index</a> ·
             <a href="amd64/23.0/llvm/systemd/signing-key.asc">Signing key</a> ·
             <a href="amd64/23.0/llvm/systemd/overlay.tar.gz">Source overlay</a> ·
             <a href="amd64/23.0/llvm/systemd/SHA256SUMS">Checksums</a> ·
             <a href="amd64/23.0/llvm/systemd/SHA256SUMS.asc">Checksum signature</a></p>
+            <p>Standard multilib/systemd: <a href="amd64/23.0/multilib/systemd/Packages">Package index</a> ·
+            <a href="amd64/23.0/multilib/systemd/signing-key.asc">Signing key</a> ·
+            <a href="amd64/23.0/multilib/systemd/overlay.tar.gz">Source overlay</a> ·
+            <a href="amd64/23.0/multilib/systemd/SHA256SUMS">Checksums</a> ·
+            <a href="amd64/23.0/multilib/systemd/SHA256SUMS.asc">Checksum signature</a></p>
 
             <h2>1. Verify the signing key and overlay</h2>
             <p>Download the signing key, overlay, checksums and checksum signature from the links above.
@@ -111,6 +145,8 @@ jobs:
           priority = 9999
            sync-uri = https://ekuos.github.io/kernel/amd64/23.0/llvm/systemd/
           verify-signature = true</code></pre>
+            <p>For the standard <code>23.0/systemd</code> multilib profile, use
+            <code>amd64/23.0/multilib/systemd/</code> in the URL instead.</p>
             <p>Add the desired flavor to <code>/etc/portage/package.accept_keywords</code>:</p>
             <pre><code>sys-kernel/linux-eku-se::ekuos-kernel ~amd64
           sys-kernel/linux-eku-aa::ekuos-kernel ~amd64</code></pre>
@@ -136,7 +172,7 @@ jobs:
           path: ${{ runner.temp }}/binhost
 
   deploy:
-    needs: build-binpkg
+    needs: assemble-pages
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.publish)
     runs-on: ubuntu-24.04
     permissions:
