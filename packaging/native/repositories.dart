@@ -383,9 +383,18 @@ ${passphrase.isEmpty ? '' : 'passphrase-file ${passFile.path}'}
         .toList();
     if (packages.length != 2)
       throw BuildFailure('Expected two pacman packages');
+    final pacdb = '${home.path}/pacman-db';
+    await Directory(pacdb).create();
     for (final pkg in packages.cast<File>()) {
       final dest = await pkg.rename('$arch/${pkg.uri.pathSegments.last}');
-      await capture('pacman', ['--config', '/dev/null', '-Qip', dest.path]);
+      await capture('pacman', [
+        '--config',
+        '/dev/null',
+        '--dbpath',
+        pacdb,
+        '-Qip',
+        dest.path,
+      ]);
       await sign(dest.path);
     }
     await runner.run('repo-add', [
@@ -416,7 +425,16 @@ Future<void> main(List<String> args) async {
       );
     }
   } on Exception catch (error) {
-    stderr.writeln('[ERROR] $error');
+    if (Platform.environment['GITHUB_ACTIONS'] == 'true') {
+      final annotation = error
+          .toString()
+          .replaceAll('%', '%25')
+          .replaceAll('\r', '%0D')
+          .replaceAll('\n', '%0A');
+      stderr.writeln('::error::$annotation');
+    } else {
+      stderr.writeln('[ERROR] $error');
+    }
     exitCode = 1;
   }
 }
