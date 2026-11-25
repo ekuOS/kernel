@@ -27,12 +27,19 @@ Future<void> runContainer({required bool sign}) async {
     '-v',
     '$temp/ekuos-binhost:/usr/local/bin/ekuos-binhost:ro',
     if (!sign) ...['-v', '$sdk:/opt/dart-sdk:ro'],
+    if (!sign && Platform.environment['EXPORT_NATIVE_PAYLOAD'] == 'true') ...[
+      '-v',
+      '$temp/native-input:/native-output',
+    ],
     'ekuos-kernel-binhost',
     '/usr/local/bin/ekuos-binhost',
     sign ? 'sign' : 'build',
   ];
   if (!sign) {
     await output.create();
+    if (Platform.environment['EXPORT_NATIVE_PAYLOAD'] == 'true') {
+      await Directory('$temp/native-input').create();
+    }
     final process = await Process.start(
       'docker',
       args,

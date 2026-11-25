@@ -205,6 +205,20 @@ Future<void> verifyInstalled(String version, String flavor) async {
   }
 }
 
+Future<void> exportNativePayload(String version, String flavor) async {
+  final release = '$version-eku-$flavor';
+  await runner.run('tar', [
+    '-C',
+    '/',
+    '-czf',
+    '/native-output/linux-eku-$flavor-$version.tar.gz',
+    'boot/vmlinuz-$release',
+    'boot/config-$release',
+    'boot/System.map-$release',
+    'usr/lib/modules/$release',
+  ]);
+}
+
 Future<void> build(String version) async {
   check(
     await Link('/etc/portage/make.profile').resolveSymbolicLinks() ==
@@ -267,6 +281,9 @@ Future<void> build(String version) async {
   }
   for (final flavor in flavors) {
     await verifyInstalled(version, flavor);
+    if (await Directory('/native-output').exists()) {
+      await exportNativePayload(version, flavor);
+    }
     stdout.writeln('Verified installed linux-eku-$flavor-$version');
   }
 }
