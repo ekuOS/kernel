@@ -1,0 +1,25 @@
+---
+title: "Boot and rollback"
+description: "Check the boot entry, verify the running kernel, and recover if needed."
+---
+
+## Before rebooting
+
+- Keep the distribution kernel and its working boot entry. Check that the ekuOS boot entry points to the new kernel and its matching initramfs; generate one with your distribution's tools if it is missing.
+- Set up the corresponding userspace security policy. In particular, the SELinux kernel expects a suitable policy and a correctly labeled filesystem.
+- These images are not signed for UEFI Secure Boot. If Secure Boot is enabled, sign the image using a key trusted by your boot chain before attempting to boot it. An OpenPGP package signature does not make the kernel image bootable under Secure Boot.
+- The kernels enforce module signatures. Distribution-specific external modules and DKMS builds are not supported by these packages; headers and module-signing private keys are not shipped. Check whether your root filesystem, storage, or network needs such a module before switching.
+
+## After boot
+
+```sh
+uname -r
+cat /sys/kernel/security/lsm
+cat /sys/kernel/security/lockdown
+```
+
+Look for `-eku-aa` with `apparmor` or `-eku-se` with `selinux`. Lockdown should show `[confidentiality]`. Use `aa-status` or `getenforce` to check the userspace policy on the corresponding distribution.
+
+## Switch back
+
+If the system fails to boot or essential hardware stops working, select the previous distribution kernel from the boot menu. Verify it with `uname -r` before changing or removing ekuOS packages. Keep the fallback until you have tested the replacement.

@@ -1,0 +1,25 @@
+---
+title: "启动与回退"
+description: "检查启动项和当前内核，并在出现问题时回退。"
+---
+
+## 重启前
+
+- 保留发行版内核以及已知可用的启动项。确认 ekuOS 启动项指向新内核和对应的 initramfs；如有缺失，请用发行版工具生成。
+- 配置与所选版本对应的用户空间安全策略。尤其是 SELinux 版本，需要适用的策略和正确标记的文件系统。
+- 这些内核镜像没有 UEFI Secure Boot 签名。如果启用了 Secure Boot，请先用启动链信任的密钥签署镜像。软件包的 OpenPGP 签名不能代替镜像签名。
+- 内核强制验证模块签名。软件包不支持发行版专用的外部模块或 DKMS，也不包含头文件和模块签名私钥。请在切换之前确认根文件系统、存储或网络是否依赖这类模块。
+
+## 启动后
+
+```sh
+uname -r
+cat /sys/kernel/security/lsm
+cat /sys/kernel/security/lockdown
+```
+
+`-eku-aa` 应对应 `apparmor`，`-eku-se` 应对应 `selinux`。锁定状态应显示 `[confidentiality]`。用对应的 `aa-status` 或 `getenforce` 检查用户空间策略。
+
+## 回退
+
+如果无法启动或必要的硬件不能工作，请在启动菜单中选择以前的发行版内核。修改或卸载 ekuOS 软件包之前，先用 `uname -r` 确认已回退。在验证新内核之前保留回退选项。

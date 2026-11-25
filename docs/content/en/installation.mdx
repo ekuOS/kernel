@@ -1,0 +1,152 @@
+---
+title: "Install a package"
+description: "Set up the signed ekuOS repositories for APT, DNF, pacman, or Portage."
+---
+
+These packages target x86-64. Keep the distribution kernel and its boot entry; ekuOS can be installed alongside it. Mount `/boot` and the EFI System Partition if your boot setup requires it. See [boot and rollback](/en/boot) before restarting.
+
+## Verify the repository key
+
+For APT, DNF and pacman, download the [public key](https://ekuos.github.io/kernel/signing-key.asc) to the current directory and display its full fingerprint. For Gentoo, use the key from the matching profile instead, as shown below.
+
+```sh
+curl -fLO https://ekuos.github.io/kernel/signing-key.asc
+gpg --show-keys --fingerprint signing-key.asc
+```
+
+Compare the full fingerprint with one obtained from the maintainer through a separate trusted channel. Do not proceed if it differs. When a command below uses `$fingerprint`, set it to the verified full fingerprint without spaces.
+
+## Debian and Ubuntu (APT)
+
+The `linux-image-eku` metapackage tracks the versioned **AppArmor** kernel. Save the verified key and add the flat APT repository:
+
+```sh
+sudo install -Dm644 signing-key.asc /etc/apt/keyrings/ekuos.asc
+echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/ekuos.asc] https://ekuos.github.io/kernel/apt/ /' |
+  sudo tee /etc/apt/sources.list.d/ekuos.list
+sudo apt update
+apt policy linux-image-eku
+sudo apt install linux-image-eku
+```
+
+Check that the candidate comes from `ekuos.github.io`. The image package runs the standard kernel hooks for initramfs and bootloader setup. [APT package index](https://ekuos.github.io/kernel/apt/Packages).
+
+## Fedora (DNF)
+
+The `kernel-eku` package uses **SELinux** and Fedora's install-only kernel policy. Install the verified key:
+
+```sh
+sudo install -Dm644 signing-key.asc /etc/pki/rpm-gpg/RPM-GPG-KEY-ekuos
+```
+
+Save this as `/etc/yum.repos.d/ekuos.repo`. Both package and repository signature checks are enabled.
+
+```ini
+[ekuos]
+name=ekuOS kernels
+baseurl=https://ekuos.github.io/kernel/dnf/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-ekuos
+```
+
+```sh
+dnf repoquery --repo=ekuos kernel-eku
+sudo dnf install kernel-eku
+```
+
+Keep Fedora's kernel installed as a fallback. The ekuOS RPM invokes `kernel-install`; RPM-based distributions with other boot hooks are not assumed compatible. [DNF repository metadata](https://ekuos.github.io/kernel/dnf/repodata/repomd.xml).
+
+## Arch Linux (pacman)
+
+Import and locally sign the verified repository key:
+
+```sh
+sudo pacman-key --add signing-key.asc
+sudo pacman-key --lsign-key "$fingerprint"
+```
+
+Add this to `/etc/pacman.conf`:
+
+```ini
+[ekuos]
+SigLevel = Required
+Server = https://ekuos.github.io/kernel/pacman/$arch
+```
+
+Upgrade normally while installing `linux-eku-se` for **SELinux**, or replace it with `linux-eku-aa` for **AppArmor**:
+
+```sh
+sudo pacman -Syu ekuos/linux-eku-se
+```
+
+The package uses the standard `mkinitcpio` hooks. Add a boot entry if your bootloader does not find the new image. [pacman database](https://ekuos.github.io/kernel/pacman/x86_64/ekuos.db).
+
+## Gentoo (Portage)
+
+Run `eselect profile show` first. Choose [LLVM/systemd](https://ekuos.github.io/kernel/amd64/23.0/llvm/systemd/Packages) or [standard multilib/systemd](https://ekuos.github.io/kernel/amd64/23.0/multilib/systemd/Packages) for `default/linux/amd64/23.0/systemd`. Do not mix profiles. The commands below use LLVM; substitute `multilib` for `llvm` in both URLs if needed.
+
+Download the key, overlay, checksums and signature in a fresh directory:
+
+```sh
+repo=https://ekuos.github.io/kernel/amd64/23.0/llvm/systemd
+curl -fLO "$repo/signing-key.asc"
+curl -fLO "$repo/overlay.tar.gz"
+curl -fLO "$repo/SHA256SUMS"
+curl -fLO "$repo/SHA256SUMS.asc"
+gpg --show-keys --fingerprint signing-key.asc
+```
+
+After comparing the fingerprint through a trusted channel, set `$fingerprint` and import the key into Portage's keyring. Verify the overlay **before** extracting it:
+
+```sh
+sudo getuto
+sudo gpg --homedir /etc/portage/gnupg --import signing-key.asc
+printf '%s:6:\n' "$fingerprint" |
+  sudo gpg --homedir /etc/portage/gnupg --import-ownertrust
+sudo gpg --homedir /etc/portage/gnupg --batch --check-trustdb
+sudo gpg --homedir /etc/portage/gnupg --assert-signer "$fingerprint" \
+  --verify SHA256SUMS.asc SHA256SUMS &&
+  grep '  overlay\.tar\.gz$' SHA256SUMS | sha256sum --check -
+```
+
+Only if verification succeeds, extract the archive into a dedicated `/var/db/repos/ekuos-kernel` directory. On updates, replace the existing overlay with the newly verified one instead of mixing versions.
+
+```sh
+sudo install -d /var/db/repos/ekuos-kernel
+sudo tar -xzf overlay.tar.gz -C /var/db/repos/ekuos-kernel
+```
+
+Save this as `/etc/portage/repos.conf/ekuos-kernel.conf`:
+
+```ini
+[ekuos-kernel]
+location = /var/db/repos/ekuos-kernel
+auto-sync = no
+```
+
+Add this to `/etc/portage/binrepos.conf`, or a file inside that directory if it is a directory:
+
+```ini
+[ekuos-kernel]
+priority = 9999
+sync-uri = https://ekuos.github.io/kernel/amd64/23.0/llvm/systemd/
+verify-signature = true
+```
+
+Add the flavor you want to `/etc/portage/package.accept_keywords`, or a file inside that directory:
+
+```text
+sys-kernel/linux-eku-se::ekuos-kernel ~amd64
+sys-kernel/linux-eku-aa::ekuos-kernel ~amd64
+```
+
+Preview the transaction and verify Portage selects the ekuOS binary. Then replace `--pretend --verbose` with `--ask` to install. Select `linux-eku-aa` instead for AppArmor.
+
+```sh
+sudo emerge --pretend --verbose --getbinpkg --usepkgonly --binpkg-respect-use=y \
+  sys-kernel/linux-eku-se::ekuos-kernel
+```
+
+Gentoo does not generate the initramfs or update the bootloader for these packages. Set them up before rebooting.

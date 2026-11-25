@@ -1,0 +1,152 @@
+---
+title: "パッケージの導入"
+description: "署名付き ekuOS リポジトリを APT、DNF、pacman、Portage で使う方法。"
+---
+
+対象は x86-64 です。標準カーネルとその起動エントリを残したまま導入できます。必要に応じて `/boot` と EFI システムパーティションをマウントしてください。再起動する前に [起動と切り戻し](/ja/boot) を確認してください。
+
+## リポジトリの署名鍵を確認する
+
+APT・DNF・pacman では、[公開鍵](https://ekuos.github.io/kernel/signing-key.asc) を現在のディレクトリにダウンロードしてフィンガープリント全体を表示します。Gentoo では後述のとおり、対象プロファイルに対応した鍵を使います。
+
+```sh
+curl -fLO https://ekuos.github.io/kernel/signing-key.asc
+gpg --show-keys --fingerprint signing-key.asc
+```
+
+別の信頼できる経路で管理者から取得したフィンガープリントと照合し、一致しなければ中止してください。以下のコマンドで `$fingerprint` を使う場合は、確認済みのフィンガープリント全体を空白なしで設定します。
+
+## Debian・Ubuntu（APT）
+
+メタパッケージ `linux-image-eku` は **AppArmor 版**のバージョン付きカーネルを追跡します。確認済みの鍵と APT ソースを登録します。
+
+```sh
+sudo install -Dm644 signing-key.asc /etc/apt/keyrings/ekuos.asc
+echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/ekuos.asc] https://ekuos.github.io/kernel/apt/ /' |
+  sudo tee /etc/apt/sources.list.d/ekuos.list
+sudo apt update
+apt policy linux-image-eku
+sudo apt install linux-image-eku
+```
+
+インストール候補が `ekuos.github.io` 由来であることを確認してください。イメージパッケージは initramfs とブートローダー設定のために標準のカーネルフックを実行します。[APT パッケージ一覧](https://ekuos.github.io/kernel/apt/Packages)
+
+## Fedora（DNF）
+
+`kernel-eku` は **SELinux 版**で、Fedora の install-only ポリシーに従います。確認済みの鍵を配置します。
+
+```sh
+sudo install -Dm644 signing-key.asc /etc/pki/rpm-gpg/RPM-GPG-KEY-ekuos
+```
+
+次の内容を `/etc/yum.repos.d/ekuos.repo` に保存します。パッケージとリポジトリの両方の署名を検証します。
+
+```ini
+[ekuos]
+name=ekuOS kernels
+baseurl=https://ekuos.github.io/kernel/dnf/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-ekuos
+```
+
+```sh
+dnf repoquery --repo=ekuos kernel-eku
+sudo dnf install kernel-eku
+```
+
+切り戻し用に Fedora 標準カーネルを残してください。ekuOS RPM は `kernel-install` を実行します。異なる起動フックを使う RPM 系ディストリビューションでの動作は前提としていません。[DNF リポジトリメタデータ](https://ekuos.github.io/kernel/dnf/repodata/repomd.xml)
+
+## Arch Linux（pacman）
+
+確認済みのリポジトリ鍵を取り込み、ローカル署名します。
+
+```sh
+sudo pacman-key --add signing-key.asc
+sudo pacman-key --lsign-key "$fingerprint"
+```
+
+次の内容を `/etc/pacman.conf` に追加します。
+
+```ini
+[ekuos]
+SigLevel = Required
+Server = https://ekuos.github.io/kernel/pacman/$arch
+```
+
+システムの更新と同時に **SELinux 版**を導入します。**AppArmor 版**を使う場合は `linux-eku-aa` に置き換えてください。
+
+```sh
+sudo pacman -Syu ekuos/linux-eku-se
+```
+
+パッケージは標準の `mkinitcpio` フックを利用します。ブートローダーが新しいイメージを自動検出しなければ、起動エントリを追加してください。[pacman データベース](https://ekuos.github.io/kernel/pacman/x86_64/ekuos.db)
+
+## Gentoo（Portage）
+
+まず `eselect profile show` を実行し、[LLVM/systemd](https://ekuos.github.io/kernel/amd64/23.0/llvm/systemd/Packages) または `default/linux/amd64/23.0/systemd` 用の [標準 multilib/systemd](https://ekuos.github.io/kernel/amd64/23.0/multilib/systemd/Packages) を選びます。プロファイルを混在させないでください。以下は LLVM の例で、標準 multilib の場合は両方の URL の `llvm` を `multilib` に置き換えます。
+
+新しいディレクトリに鍵、オーバーレイ、チェックサムとその署名をダウンロードします。
+
+```sh
+repo=https://ekuos.github.io/kernel/amd64/23.0/llvm/systemd
+curl -fLO "$repo/signing-key.asc"
+curl -fLO "$repo/overlay.tar.gz"
+curl -fLO "$repo/SHA256SUMS"
+curl -fLO "$repo/SHA256SUMS.asc"
+gpg --show-keys --fingerprint signing-key.asc
+```
+
+別経路でフィンガープリントを照合してから `$fingerprint` を設定し、Portage の鍵リングに取り込みます。オーバーレイは展開する**前に**検証します。
+
+```sh
+sudo getuto
+sudo gpg --homedir /etc/portage/gnupg --import signing-key.asc
+printf '%s:6:\n' "$fingerprint" |
+  sudo gpg --homedir /etc/portage/gnupg --import-ownertrust
+sudo gpg --homedir /etc/portage/gnupg --batch --check-trustdb
+sudo gpg --homedir /etc/portage/gnupg --assert-signer "$fingerprint" \
+  --verify SHA256SUMS.asc SHA256SUMS &&
+  grep '  overlay\.tar\.gz$' SHA256SUMS | sha256sum --check -
+```
+
+検証に成功した場合だけ、専用の `/var/db/repos/ekuos-kernel` に展開します。更新時は古いファイルに上書きせず、新たに検証したオーバーレイで置き換えてください。
+
+```sh
+sudo install -d /var/db/repos/ekuos-kernel
+sudo tar -xzf overlay.tar.gz -C /var/db/repos/ekuos-kernel
+```
+
+`/etc/portage/repos.conf/ekuos-kernel.conf` に次の内容を保存します。
+
+```ini
+[ekuos-kernel]
+location = /var/db/repos/ekuos-kernel
+auto-sync = no
+```
+
+`/etc/portage/binrepos.conf` に、ディレクトリの場合はその中のファイルに、次の設定を追加します。
+
+```ini
+[ekuos-kernel]
+priority = 9999
+sync-uri = https://ekuos.github.io/kernel/amd64/23.0/llvm/systemd/
+verify-signature = true
+```
+
+使う版を `/etc/portage/package.accept_keywords` に、ディレクトリの場合はその中のファイルに追加します。
+
+```text
+sys-kernel/linux-eku-se::ekuos-kernel ~amd64
+sys-kernel/linux-eku-aa::ekuos-kernel ~amd64
+```
+
+まずプレビューで ekuOS のバイナリが選ばれることを確認し、`--pretend --verbose` を `--ask` に置き換えてインストールします。AppArmor 版は `linux-eku-aa` を選択してください。
+
+```sh
+sudo emerge --pretend --verbose --getbinpkg --usepkgonly --binpkg-respect-use=y \
+  sys-kernel/linux-eku-se::ekuos-kernel
+```
+
+Gentoo ではこれらのパッケージは initramfs を生成せず、ブートローダーも更新しません。再起動する前に設定してください。

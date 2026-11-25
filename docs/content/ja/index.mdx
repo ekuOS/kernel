@@ -1,0 +1,15 @@
+---
+title: "ekuOS カーネル"
+description: "x86-64 の PC や仮想マシン向けのハードニング済み Linux カーネル。"
+---
+
+ekuOS は Clang/LLVM で Linux をビルドし、モジュール署名と機密性モードのロックダウンを強制します。NVMe、SATA、USB ストレージ、VirtIO などのハードウェア設定は共通で、適用する主要なセキュリティモジュールが SELinux 版と AppArmor 版で異なります。
+
+| ディストリビューション | パッケージ管理 | 提供パッケージ |
+| --- | --- | --- |
+| Debian・Ubuntu | APT | `linux-image-eku`（AppArmor） |
+| Fedora | DNF | `kernel-eku`（SELinux） |
+| Arch Linux | pacman | `linux-eku-aa` または `linux-eku-se` |
+| Gentoo amd64 systemd | Portage | `sys-kernel/linux-eku-aa` または `sys-kernel/linux-eku-se` |
+
+[導入手順](/ja/installation)に従ってインストールし、[起動と切り戻し](/ja/boot)を確認してください。復旧に使えるように、ディストリビューション標準のカーネルは残しておいてください。

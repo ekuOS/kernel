@@ -1,0 +1,152 @@
+---
+title: "安装软件包"
+description: "为 APT、DNF、pacman 或 Portage 配置已签名的 ekuOS 仓库。"
+---
+
+软件包适用于 x86-64。可以在保留发行版内核和启动项的情况下安装。若启动配置有此要求，请先挂载 `/boot` 和 EFI 系统分区。重启之前请阅读[启动与回退](/zh-CN/boot)。
+
+## 验证仓库签名密钥
+
+使用 APT、DNF 和 pacman 时，先将[公钥](https://ekuos.github.io/kernel/signing-key.asc)下载到当前目录并显示完整指纹。Gentoo 请按下文使用对应配置的密钥。
+
+```sh
+curl -fLO https://ekuos.github.io/kernel/signing-key.asc
+gpg --show-keys --fingerprint signing-key.asc
+```
+
+请通过另一条可信渠道向维护者获取完整指纹并比对。如果不一致，不要继续。以下命令如需 `$fingerprint`，请将其设置为已验证的完整指纹，不含空格。
+
+## Debian 和 Ubuntu（APT）
+
+`linux-image-eku` 元包跟踪带版本号的 **AppArmor** 内核。安装已验证的密钥并添加 APT 软件源：
+
+```sh
+sudo install -Dm644 signing-key.asc /etc/apt/keyrings/ekuos.asc
+echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/ekuos.asc] https://ekuos.github.io/kernel/apt/ /' |
+  sudo tee /etc/apt/sources.list.d/ekuos.list
+sudo apt update
+apt policy linux-image-eku
+sudo apt install linux-image-eku
+```
+
+确认候选版本来自 `ekuos.github.io`。内核镜像包会运行标准的 initramfs 和引导加载器钩子。[APT 软件包索引](https://ekuos.github.io/kernel/apt/Packages)。
+
+## Fedora（DNF）
+
+`kernel-eku` 使用 **SELinux**，并遵循 Fedora 的内核并行安装策略。安装已验证的密钥：
+
+```sh
+sudo install -Dm644 signing-key.asc /etc/pki/rpm-gpg/RPM-GPG-KEY-ekuos
+```
+
+将以下配置保存为 `/etc/yum.repos.d/ekuos.repo`，同时启用软件包和仓库的签名校验：
+
+```ini
+[ekuos]
+name=ekuOS kernels
+baseurl=https://ekuos.github.io/kernel/dnf/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-ekuos
+```
+
+```sh
+dnf repoquery --repo=ekuos kernel-eku
+sudo dnf install kernel-eku
+```
+
+请保留 Fedora 内核以便回退。ekuOS RPM 会调用 `kernel-install`，不保证兼容使用其他启动钩子的 RPM 发行版。[DNF 仓库元数据](https://ekuos.github.io/kernel/dnf/repodata/repomd.xml)。
+
+## Arch Linux（pacman）
+
+导入已验证的仓库密钥并在本地签名：
+
+```sh
+sudo pacman-key --add signing-key.asc
+sudo pacman-key --lsign-key "$fingerprint"
+```
+
+在 `/etc/pacman.conf` 中添加：
+
+```ini
+[ekuos]
+SigLevel = Required
+Server = https://ekuos.github.io/kernel/pacman/$arch
+```
+
+正常升级系统并安装 **SELinux** 版本；如需 **AppArmor**，将包名替换成 `linux-eku-aa`：
+
+```sh
+sudo pacman -Syu ekuos/linux-eku-se
+```
+
+软件包使用标准 `mkinitcpio` 钩子。如果引导加载器没有自动识别新镜像，请添加启动项。[pacman 数据库](https://ekuos.github.io/kernel/pacman/x86_64/ekuos.db)。
+
+## Gentoo（Portage）
+
+先运行 `eselect profile show`。选择 [LLVM/systemd](https://ekuos.github.io/kernel/amd64/23.0/llvm/systemd/Packages) 或适用于 `default/linux/amd64/23.0/systemd` 的[标准 multilib/systemd](https://ekuos.github.io/kernel/amd64/23.0/multilib/systemd/Packages)。不要混用配置。以下以 LLVM 为例，使用标准 multilib 时，请将两个 URL 中的 `llvm` 替换为 `multilib`。
+
+在新目录中下载密钥、overlay、校验和及其签名：
+
+```sh
+repo=https://ekuos.github.io/kernel/amd64/23.0/llvm/systemd
+curl -fLO "$repo/signing-key.asc"
+curl -fLO "$repo/overlay.tar.gz"
+curl -fLO "$repo/SHA256SUMS"
+curl -fLO "$repo/SHA256SUMS.asc"
+gpg --show-keys --fingerprint signing-key.asc
+```
+
+通过可信渠道核对指纹，再设置 `$fingerprint` 并导入 Portage 密钥环。必须在解压**之前**验证 overlay：
+
+```sh
+sudo getuto
+sudo gpg --homedir /etc/portage/gnupg --import signing-key.asc
+printf '%s:6:\n' "$fingerprint" |
+  sudo gpg --homedir /etc/portage/gnupg --import-ownertrust
+sudo gpg --homedir /etc/portage/gnupg --batch --check-trustdb
+sudo gpg --homedir /etc/portage/gnupg --assert-signer "$fingerprint" \
+  --verify SHA256SUMS.asc SHA256SUMS &&
+  grep '  overlay\.tar\.gz$' SHA256SUMS | sha256sum --check -
+```
+
+验证成功后，才可以解压到专用目录 `/var/db/repos/ekuos-kernel`。更新时，用新验证的 overlay 替换旧目录，不要混用不同版本。
+
+```sh
+sudo install -d /var/db/repos/ekuos-kernel
+sudo tar -xzf overlay.tar.gz -C /var/db/repos/ekuos-kernel
+```
+
+将以下配置保存为 `/etc/portage/repos.conf/ekuos-kernel.conf`：
+
+```ini
+[ekuos-kernel]
+location = /var/db/repos/ekuos-kernel
+auto-sync = no
+```
+
+将以下配置添加到 `/etc/portage/binrepos.conf`；如果该路径是目录，则添加到其中的配置文件：
+
+```ini
+[ekuos-kernel]
+priority = 9999
+sync-uri = https://ekuos.github.io/kernel/amd64/23.0/llvm/systemd/
+verify-signature = true
+```
+
+将所需版本添加到 `/etc/portage/package.accept_keywords`；如果该路径是目录，则添加到其中的文件：
+
+```text
+sys-kernel/linux-eku-se::ekuos-kernel ~amd64
+sys-kernel/linux-eku-aa::ekuos-kernel ~amd64
+```
+
+预览安装并确认 Portage 选择了 ekuOS 二进制包。然后将 `--pretend --verbose` 替换为 `--ask` 来安装。如需 AppArmor，请选择 `linux-eku-aa`。
+
+```sh
+sudo emerge --pretend --verbose --getbinpkg --usepkgonly --binpkg-respect-use=y \
+  sys-kernel/linux-eku-se::ekuos-kernel
+```
+
+这些 Gentoo 软件包不会生成 initramfs 或更新引导加载器。请在重启前完成这些设置。

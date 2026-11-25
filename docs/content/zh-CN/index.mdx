@@ -1,0 +1,15 @@
+---
+title: "ekuOS 内核"
+description: "面向 x86-64 电脑和虚拟机的加固 Linux 内核。"
+---
+
+ekuOS 使用 Clang/LLVM 构建 Linux，强制验证模块签名并启用机密性锁定。两个版本共用硬件配置，内置 NVMe、SATA、USB 存储和 VirtIO 支持，但分别启用 SELinux 或 AppArmor。
+
+| 发行版 | 包管理器 | 可用软件包 |
+| --- | --- | --- |
+| Debian 和 Ubuntu | APT | `linux-image-eku`（AppArmor） |
+| Fedora | DNF | `kernel-eku`（SELinux） |
+| Arch Linux | pacman | `linux-eku-aa` 或 `linux-eku-se` |
+| Gentoo amd64 systemd | Portage | `sys-kernel/linux-eku-aa` 或 `sys-kernel/linux-eku-se` |
+
+先阅读[安装指南](/zh-CN/installation)，再查看[启动与回退](/zh-CN/boot)。请保留发行版内核及其可用的启动项，以便回退。

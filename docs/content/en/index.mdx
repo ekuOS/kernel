@@ -1,0 +1,15 @@
+---
+title: "ekuOS Kernel"
+description: "Hardened Linux kernels for x86-64 PCs and virtual machines."
+---
+
+ekuOS builds Linux with Clang/LLVM, mandatory module signatures and confidentiality lockdown. Both flavors use the same hardware profile, including built-in NVMe, SATA, USB storage and VirtIO. The SELinux and AppArmor flavors differ in the major security module they enforce.
+
+| Distribution | Package manager | Available packages |
+| --- | --- | --- |
+| Debian and Ubuntu | APT | `linux-image-eku` (AppArmor) |
+| Fedora | DNF | `kernel-eku` (SELinux) |
+| Arch Linux | pacman | `linux-eku-aa` or `linux-eku-se` |
+| Gentoo amd64 systemd | Portage | `sys-kernel/linux-eku-aa` or `sys-kernel/linux-eku-se` |
+
+Start with the [installation guide](/en/installation), then check the [boot and rollback guide](/en/boot). Keep the distribution kernel installed so you have a known-good boot entry.
