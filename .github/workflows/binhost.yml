@@ -1,4 +1,4 @@
-name: Publish Gentoo kernel binhost
+name: Publish kernel package repositories
 
 on:
   push:
@@ -32,6 +32,7 @@ jobs:
             stage3: amd64-systemd-20261116
     env:
       BINHOST_PATH: amd64/23.0/${{ matrix.flavor }}/systemd
+      EXPORT_NATIVE_PAYLOAD: ${{ matrix.flavor == 'multilib' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -57,6 +58,15 @@ jobs:
       - name: Build and test both Gentoo binpkgs
         run: dart run packaging/gentoo/ci.dart build
 
+      - name: Save verified kernel payloads for native packaging
+        if: matrix.flavor == 'multilib'
+        uses: actions/upload-artifact@v7
+        with:
+          name: kernel-native-input
+          path: ${{ runner.temp }}/native-input/
+          if-no-files-found: error
+          compression-level: 0
+
       - name: Sign GPKGs and regenerate their Portage index
         if: github.event_name == 'push' || inputs.publish
         env:
@@ -78,8 +88,47 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
-  assemble-pages:
+  native-packages:
     needs: build-binpkg
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+          problem-matcher: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: kernel-native-input
+          path: ${{ runner.temp }}/native-input
+      - name: Install package tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apt-utils rpm createrepo-c libarchive-tools makepkg pacman-package-manager zstd
+      - name: Build native packages
+        run: |
+          dart format --output=none --set-exit-if-changed packaging/native/
+          dart analyze packaging/native/
+          dart run packaging/native/repositories.dart build "$RUNNER_TEMP/native-input" "$RUNNER_TEMP/native-site"
+      - name: Sign and index native packages
+        if: github.event_name == 'push' || inputs.publish
+        env:
+          BINHOST_GPG_PRIVATE_KEY: ${{ secrets.BINHOST_GPG_PRIVATE_KEY }}
+          BINHOST_GPG_PASSPHRASE: ${{ secrets.BINHOST_GPG_PASSPHRASE }}
+        run: dart run packaging/native/repositories.dart publish "$RUNNER_TEMP/native-site"
+      - name: Save native repositories
+        if: github.event_name == 'push' || inputs.publish
+        uses: actions/upload-artifact@v7
+        with:
+          name: kernel-native-repositories
+          path: ${{ runner.temp }}/native-site/
+          if-no-files-found: error
+          compression-level: 0
+
+  assemble-pages:
+    needs: [build-binpkg, native-packages]
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.publish)
     runs-on: ubuntu-24.04
     steps:
@@ -89,6 +138,11 @@ jobs:
           path: ${{ runner.temp }}/binhost
           merge-multiple: true
 
+      - uses: actions/download-artifact@v8
+        with:
+          name: kernel-native-repositories
+          path: ${{ runner.temp }}/binhost
+
       - name: Write binhost usage page
         working-directory: ${{ runner.temp }}/binhost
         run: |
@@ -97,7 +151,7 @@ jobs:
           <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>ekuOS Gentoo kernel binhost</title>
+            <title>ekuOS kernel package repositories</title>
             <style>
               body { font: 1rem/1.55 system-ui, sans-serif; max-width: 50rem; margin: 2rem auto; padding: 0 1rem; }
               pre { overflow-x: auto; padding: 1rem; border: 1px solid; border-radius: .4rem; }
@@ -105,7 +159,16 @@ jobs:
           </head>
           <body>
           <main>
-            <h1>ekuOS Gentoo kernel binhost</h1>
+            <h1>ekuOS kernel package repositories</h1>
+            <p><a href="apt/Packages">APT index</a> ·
+            <a href="dnf/repodata/repomd.xml">DNF index</a> ·
+            <a href="pacman/x86_64/ekuos.db">pacman index</a> ·
+            <a href="signing-key.asc">Signing key</a> ·
+            <a href="https://github.com/ekuOS/kernel/blob/main/packaging/native/README.md">APT, DNF and pacman setup</a></p>
+            <p>Debian/Ubuntu: <code>linux-image-eku</code> (AppArmor).
+            Fedora: <code>kernel-eku</code> (SELinux).
+            Arch Linux: <code>linux-eku-se</code> or <code>linux-eku-aa</code>.</p>
+            <h2>Gentoo binhost</h2>
             <p>Signed SELinux (<code>linux-eku-se</code>) and AppArmor (<code>linux-eku-aa</code>)
             kernels for Gentoo amd64 LLVM/systemd and standard multilib/systemd.</p>
             <p>LLVM/systemd: <a href="amd64/23.0/llvm/systemd/Packages">Package index</a> ·

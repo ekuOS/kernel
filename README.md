@@ -29,10 +29,11 @@ Existing source trees are reused; patches in `patches/` are applied in filename
 order. The builder exports the kernel image, config and signed modules; it
 does not install them or change the bootloader.
 
-## Gentoo
+## Binary packages
 
-See [Gentoo binhost](packaging/gentoo/README.md) for signed packages,
-Portage setup and GitHub Pages publication.
+The [Pages repository](https://ekuos.github.io/kernel/) publishes signed
+packages for [Gentoo](packaging/gentoo/README.md) and
+[APT, DNF and pacman](packaging/native/README.md).
 
 Build tooling is [MIT-licensed](LICENSE); Linux and third-party patches
 retain their own licenses.
