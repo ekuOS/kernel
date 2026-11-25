@@ -31,9 +31,10 @@ does not install them or change the bootloader.
 
 ## Binary packages
 
-The [Pages repository](https://ekuos.github.io/kernel/) publishes signed
-packages for [Gentoo](packaging/gentoo/README.md) and
-[APT, DNF and pacman](packaging/native/README.md).
+The [installation guide](https://ekuos.github.io/kernel/en/installation)
+explains how to install the signed packages with APT, DNF, pacman, or Portage.
+It is also available in [日本語](https://ekuos.github.io/kernel/ja/installation)
+and [简体中文](https://ekuos.github.io/kernel/zh-CN/installation).
 
 Build tooling is [MIT-licensed](LICENSE); Linux and third-party patches
 retain their own licenses.
