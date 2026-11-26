@@ -3,8 +3,9 @@
 Builds hardened x86-64 Linux kernels with Clang/LLVM. The default `eku.conf`
 is shared by standalone and Gentoo builds. It enables common PC and VM
 hardware, including built-in NVMe, SATA, USB storage, VirtIO, ext4 and Btrfs.
-Its Fedora-informed driver selection also includes signed modules for common
-audio, Wi-Fi, Bluetooth, graphics, cameras, and laptop peripherals.
+Its driver selection draws on Fedora and Ubuntu's x86-64 kernel configs and
+includes signed modules for audio, networking, graphics, cameras, and laptop
+and USB peripherals.
 
 | Flavor | Security module | Artifacts |
 | --- | --- | --- |
