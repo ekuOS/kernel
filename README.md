@@ -15,22 +15,31 @@ and USB peripherals.
 Both flavors enforce module signatures and confidentiality lockdown. Install
 the appropriate userspace security policy separately.
 
+Both also activate the [Microvisor LSM](https://github.com/ekuOS/microvisor-lsm).
+Microvisor protects browser files marked with `security.microvisor` labels.
+To add or change labels, boot with `microvisor` omitted from the `lsm=` list
+and follow the upstream setup instructions. Include `microvisor` in any custom
+`lsm=` list used for normal boots.
+
 ## Build locally
 
-Requires Dart 3+, Git, GNU make and patch, Clang/LLVM and LLD 22+, flex,
-bison, bc, and OpenSSL and libelf development headers.
+Requires Dart 3+, Git, GNU make and patch, Clang/LLVM and LLD 22+, Rust 1.85+
+with its standard library sources (`rust-src`), bindgen 0.71.1+, flex, bison,
+bc, and OpenSSL and libelf development headers.
 
 ```console
-dart run build.dart                  # Build both flavors
-dart run build.dart --flavor se      # Or build only SELinux
+dart run build.dart --tag v7.3.6      # Build both flavors
+dart run build.dart --tag v7.3.6 --flavor se
 dart run build.dart --help           # Source, tag, config and other options
 dart run build.dart clean --dry-run  # Preview cleanup; --keep-source preserves Linux
 ```
 
 A missing source tree is cloned from the latest stable Linux tag by default.
 Existing source trees are reused; patches in `patches/` are applied in filename
-order. The builder exports the kernel image, config and signed modules; it
-does not install them or change the bootloader.
+order. The Microvisor patch targets Linux 7.3.6; use `--source` to choose a
+fresh directory if an existing source tree is on a different version. The
+builder exports the kernel image, config and signed modules; it does not
+install them or change the bootloader.
 
 ## Binary packages
 

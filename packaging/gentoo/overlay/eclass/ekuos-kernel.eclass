@@ -22,7 +22,12 @@ BDEPEND="
 	app-alternatives/bc
 	dev-libs/elfutils
 	dev-libs/openssl
+	>=dev-util/bindgen-0.71.1
 	dev-vcs/git
+	|| (
+		>=dev-lang/rust-bin-1.85.0[rust-src]
+		>=dev-lang/rust-1.85.0[rust-src]
+	)
 	sys-apps/kmod
 	sys-devel/bison
 	sys-devel/flex

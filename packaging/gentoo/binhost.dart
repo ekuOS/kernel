@@ -241,6 +241,10 @@ Future<void> build(String version) async {
     '/etc/portage/package.accept_keywords/ekuos-kernel',
     atoms.map((atom) => '$atom ~amd64').join('\n'),
   );
+  await write(
+    '/etc/portage/package.use/ekuos-kernel',
+    'dev-lang/rust-bin rust-src\ndev-lang/rust rust-src',
+  );
   final env = {
     'MAKEOPTS': '-j${Platform.numberOfProcessors}',
     // Keep the verified artifact bundle until after the binary installs.

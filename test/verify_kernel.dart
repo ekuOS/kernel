@@ -114,6 +114,11 @@ Future<void> main(List<String> args) async {
             !lsm.contains(flavor == 'se' ? 'apparmor' : 'selinux'),
         'Incorrect exclusive LSM selection for $flavor',
       );
+      check(
+        actual['CONFIG_SECURITY_MICROVISOR'] == 'y' &&
+            lsm.contains('microvisor'),
+        'Microvisor is not enabled by default for $flavor',
+      );
     }
     final files = metadata['files'] as List<dynamic>;
     for (final entry in files.cast<Map<String, dynamic>>()) {
@@ -129,6 +134,15 @@ Future<void> main(List<String> args) async {
     }
     for (final name in ['vmlinux', 'System.map', '.config']) {
       await sameFile('$build/$name', '$out/$name');
+    }
+    if (flavor == 'se' || flavor == 'aa') {
+      final symbols = await File('$out/System.map').readAsString();
+      for (final symbol in ['__lsm_microvisor', 'microvisor_access']) {
+        check(
+          RegExp(' $symbol\$', multiLine: true).hasMatch(symbols),
+          'Microvisor symbol $symbol is missing from $flavor',
+        );
+      }
     }
     await sameFile('$build/arch/x86/boot/bzImage', '$out/bzImage');
     await sameFile(profile, '$out/build-profile.conf');

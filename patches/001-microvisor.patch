@@ -1,0 +1,511 @@
+Import the Microvisor LSM from
+https://github.com/ekuOS/microvisor-lsm/commit/755fbc48f36cec286316391f1e4b277b909beab5
+for Linux 7.3.6. Omit the separate rust-example LSM and its Rust API.
+
+diff --git a/include/linux/args.h b/include/linux/args.h
+index 0562dc51435e2dc1930f74ea435abd853f755cd6..169dccf096f245e4523135f5766d5ca981fae037 100644
+--- a/include/linux/args.h
++++ b/include/linux/args.h
+@@ -6,9 +6,9 @@
+ /*
+  * How do these macros work?
+  *
+- * In __COUNT_ARGS() _0 to _15 are just placeholders from the start
++ * In __COUNT_ARGS() _0 to _16 are just placeholders from the start
+  * in order to make sure _n is positioned over the correct number
+- * from 15 to 0 (depending on X, which is a variadic argument list).
++ * from 16 to 0 (depending on X, which is a variadic argument list).
+  * They serve no purpose other than occupying a position. Since each
+  * macro parameter must have a distinct identifier, those identifiers
+  * are as good as any.
+@@ -17,9 +17,9 @@
+  * that as _n.
+  */
+ 
+-/* This counts to 15. Any more, it will return 16th argument. */
+-#define __COUNT_ARGS(_0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _n, X...) _n
+-#define COUNT_ARGS(X...) __COUNT_ARGS(, ##X, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
++/* This counts to 16. Any more, it will return 17th argument. */
++#define __COUNT_ARGS(_0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _n, X...) _n
++#define COUNT_ARGS(X...) __COUNT_ARGS(, ##X, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
+ 
+ /* Concatenate two parameters, but allow them to be expanded beforehand. */
+ #define __CONCAT(a, b) a ## b
+diff --git a/include/linux/lsm_count.h b/include/linux/lsm_count.h
+index 16eb49761b253e64e4fc72cdc99eb7381c0c07e9..5b211014d171d734f1578cb97def2d8b9b1183e9 100644
+--- a/include/linux/lsm_count.h
++++ b/include/linux/lsm_count.h
+@@ -96,6 +96,12 @@
+ #define EVM_ENABLED
+ #endif
+ 
++#if IS_ENABLED(CONFIG_SECURITY_MICROVISOR)
++#define MICROVISOR_ENABLED 1,
++#else
++#define MICROVISOR_ENABLED
++#endif
++
+ #if IS_ENABLED(CONFIG_SECURITY_IPE)
+ #define IPE_ENABLED 1,
+ #else
+@@ -124,6 +130,7 @@
+ 		LANDLOCK_ENABLED	\
+ 		IMA_ENABLED		\
+ 		EVM_ENABLED		\
++		MICROVISOR_ENABLED	\
+ 		IPE_ENABLED)
+ 
+ #else
+diff --git a/security/Kconfig b/security/Kconfig
+index f7bf6cdc6229ebaf41fc72dcad22487ee626a513..ffbbe2a126459dad178ff258ad3fff898081bad9 100644
+--- a/security/Kconfig
++++ b/security/Kconfig
+@@ -227,6 +227,7 @@ source "security/yama/Kconfig"
+ source "security/safesetid/Kconfig"
+ source "security/lockdown/Kconfig"
+ source "security/landlock/Kconfig"
++source "security/microvisor/Kconfig"
+ source "security/ipe/Kconfig"
+ 
+ source "security/integrity/Kconfig"
+diff --git a/security/Makefile b/security/Makefile
+index 4601230ba442a1bcedc3f999b74a7796ac72894d..5c7f6ccfb18b945bd59140ea72faaca1003e5e47 100644
+--- a/security/Makefile
++++ b/security/Makefile
+@@ -25,6 +25,7 @@ obj-$(CONFIG_SECURITY_LOCKDOWN_LSM)	+= lockdown/
+ obj-$(CONFIG_CGROUPS)			+= device_cgroup.o
+ obj-$(CONFIG_BPF_LSM)			+= bpf/
+ obj-$(CONFIG_SECURITY_LANDLOCK)		+= landlock/
++obj-$(CONFIG_SECURITY_MICROVISOR)	+= microvisor/
+ obj-$(CONFIG_SECURITY_IPE)		+= ipe/
+ 
+ # Object integrity file lists
+diff --git a/security/microvisor/Kconfig b/security/microvisor/Kconfig
+new file mode 100644
+index 0000000000000000000000000000000000000000..5ab7f7f4576e56defff18102f2dc429ad4b4f54e
+--- /dev/null
++++ b/security/microvisor/Kconfig
+@@ -0,0 +1,19 @@
++# SPDX-License-Identifier: GPL-2.0-only
++config SECURITY_MICROVISOR
++	bool "Microvisor application data protection"
++	depends on SECURITY && RUST && MULTIUSER
++	select EXT4_FS_SECURITY if EXT4_FS
++	help
++	  Use security.microvisor inode xattrs to label browser executables
++	  and their data independently of Unix ownership. See the
++	  overlay README before enabling microvisor in the active LSM list.
++
++config MICROVISOR_PTRACE
++	bool "Restrict ptrace access to protected applications"
++	depends on SECURITY_MICROVISOR
++	default y
++
++config MICROVISOR_FD
++	bool "Restrict use of descriptors opened by protected applications"
++	depends on SECURITY_MICROVISOR
++	default y
+diff --git a/security/microvisor/Makefile b/security/microvisor/Makefile
+new file mode 100644
+index 0000000000000000000000000000000000000000..60a0f2a577ecc21355ca551427f4d7fb6f4848dd
+--- /dev/null
++++ b/security/microvisor/Makefile
+@@ -0,0 +1,2 @@
++# SPDX-License-Identifier: GPL-2.0-only
++obj-y := hooks.o policy.o
+diff --git a/security/microvisor/hooks.c b/security/microvisor/hooks.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..33f91c7f88c75c10e8f0d67bcc0c480ad265cb3c
+--- /dev/null
++++ b/security/microvisor/hooks.c
+@@ -0,0 +1,316 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <linux/binfmts.h>
++#include <linux/cred.h>
++#include <linux/fs.h>
++#include <linux/lsm_hooks.h>
++#include <linux/mount.h>
++#include <linux/personality.h>
++#include <linux/xattr.h>
++#include <linux/magic.h>
++
++#define MV_XATTR XATTR_SECURITY_PREFIX "microvisor"
++
++extern int microvisor_decode(const u8 *value, size_t len);
++extern int microvisor_exec(u32 old, int label, bool trusted, bool safe_transition);
++extern int microvisor_access(u32 subject, int label, u32 target);
++extern int microvisor_insert(int directory, int incoming);
++
++static struct lsm_blob_sizes blobs __ro_after_init = {
++	.lbs_cred = sizeof(u32),
++	.lbs_inode = sizeof(int),
++	.lbs_xattr_count = 1,
++};
++
++static int *inode_label(const struct inode *inode)
++{
++	return inode->i_security + blobs.lbs_inode;
++}
++
++/* These local filesystems persist security_inode_init_security() xattrs. */
++static bool label_fs(const struct inode *inode)
++{
++	switch (inode->i_sb->s_magic) {
++	case EXT4_SUPER_MAGIC:
++	case BTRFS_SUPER_MAGIC:
++	case XFS_SUPER_MAGIC:
++		return true;
++	default:
++		return false;
++	}
++}
++
++static int alloc_label(struct inode *inode)
++{
++	/* No access on a labeling filesystem until the label has been read. */
++	*inode_label(inode) = label_fs(inode) ? INT_MIN : 0;
++	return 0;
++}
++
++static void load_label(struct dentry *dentry, struct inode *inode)
++{
++	u8 value[15]; /* "data:" followed by at most ten decimal digits */
++	int len, label;
++
++	if (!inode || !label_fs(inode) || READ_ONCE(*inode_label(inode)) != INT_MIN)
++		return;
++	len = __vfs_getxattr(dentry, inode, MV_XATTR, value, sizeof(value));
++	if (len == -ENODATA)
++		label = 0;
++	else if (len < 0)
++		label = INT_MIN;
++	else
++		label = microvisor_decode(value, len);
++	WRITE_ONCE(*inode_label(inode), label);
++}
++
++static int inherit_label(struct inode *inode, struct inode *dir, const struct qstr *name,
++			 struct xattr *xattrs, int *count)
++{
++	int parent = READ_ONCE(*inode_label(dir));
++	struct xattr *xattr;
++
++	if (parent == INT_MIN)
++		return -EACCES;
++	if (parent <= 0) {
++		WRITE_ONCE(*inode_label(inode), 0);
++		return -EOPNOTSUPP;
++	}
++	xattr = lsm_get_xattr_slot(xattrs, count);
++	if (!xattr)
++		return -EACCES;
++	xattr->name = "microvisor";
++	xattr->value = kasprintf(GFP_NOFS, "data:%d", parent);
++	if (!xattr->value)
++		return -ENOMEM;
++	xattr->value_len = strlen(xattr->value);
++	WRITE_ONCE(*inode_label(inode), parent);
++	return 0;
++}
++
++static u32 *profile(const struct cred *cred)
++{
++	return cred->security + blobs.lbs_cred;
++}
++
++static void copy_profile(struct cred *new, const struct cred *old)
++{
++	*profile(new) = *profile(old);
++}
++
++static int prepare_profile(struct cred *new, const struct cred *old, gfp_t gfp)
++{
++	copy_profile(new, old);
++	return 0;
++}
++
++static int exec_profile(struct linux_binprm *bprm, const struct file *file)
++{
++	struct inode *inode = file_inode(file);
++	u32 old = *profile(current_cred());
++	bool trusted = file == bprm->file && uid_eq(inode->i_uid, GLOBAL_ROOT_UID) &&
++		!(inode->i_mode & (S_IWGRP | S_IWOTH)) &&
++		inode->i_sb->s_user_ns == &init_user_ns &&
++		file_mnt_idmap(file) == &nop_mnt_idmap && mnt_may_suid(file->f_path.mnt);
++	int next = microvisor_exec(old, READ_ONCE(*inode_label(inode)), trusted,
++				   !bprm->unsafe && current_user_ns() == &init_user_ns);
++
++	if (next < 0)
++		return next;
++	if (next && next != old) {
++		bprm->secureexec = 1;
++		bprm->interp_flags |= BINPRM_FLAGS_ENFORCE_NONDUMP;
++		bprm->per_clear |= PER_CLEAR_ON_SETID;
++	}
++	*profile(bprm->cred) = next;
++	return 0;
++}
++
++static int check_inode(struct inode *inode)
++{
++	return microvisor_access(*profile(current_cred()),
++				 READ_ONCE(*inode_label(inode)), 0);
++}
++
++static int check_permission(struct inode *inode, int mask)
++{
++	return check_inode(inode);
++}
++
++static int check_dentry(struct dentry *dentry)
++{
++	return check_inode(d_backing_inode(dentry));
++}
++
++static int check_getattr(const struct path *path)
++{
++	return check_dentry(path->dentry);
++}
++
++static int check_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
++			 struct iattr *attr)
++{
++	return check_dentry(dentry);
++}
++
++static int check_follow(struct dentry *dentry, struct inode *inode, bool rcu)
++{
++	return check_inode(inode);
++}
++
++static int check_entry(struct inode *dir, struct dentry *entry)
++{
++	return check_dentry(entry);
++}
++
++static int check_getxattr(struct dentry *entry, const char *name)
++{
++	return check_dentry(entry);
++}
++
++static int check_removexattr(struct mnt_idmap *idmap, struct dentry *entry,
++			     const char *name)
++{
++	if (!strcmp(name, MV_XATTR))
++		return -EPERM;
++	return check_dentry(entry);
++}
++
++static int check_setxattr(struct mnt_idmap *idmap, struct dentry *entry,
++			  const char *name, const void *value, size_t size, int flags)
++{
++	return check_removexattr(idmap, entry, name);
++}
++
++static int check_setacl(struct mnt_idmap *idmap, struct dentry *entry,
++			const char *name, struct posix_acl *acl)
++{
++	return check_dentry(entry);
++}
++
++static int check_link(struct dentry *src, struct inode *dir, struct dentry *dst)
++{
++	int ret = check_dentry(src);
++
++	if (ret)
++		return ret;
++	return microvisor_insert(READ_ONCE(*inode_label(dir)),
++				 READ_ONCE(*inode_label(d_backing_inode(src))));
++}
++
++static int check_rename(struct inode *old_dir, struct dentry *src,
++			struct inode *new_dir, struct dentry *dst)
++{
++	int ret = check_link(src, new_dir, dst);
++
++	if (ret || d_is_negative(dst))
++		return ret;
++	/* inode_rename does not expose RENAME_EXCHANGE: check both directions. */
++	return check_link(dst, old_dir, src);
++}
++
++static int check_file(struct file *file)
++{
++	u32 opener = 0;
++
++	/* ELF loading can continue after exec_profile's new creds take effect.
++	 * As in apparmor_file_open(), __FMODE_EXEC identifies the kernel's
++	 * executable file, not a descriptor passed to the new program.
++	 */
++	if (IS_ENABLED(CONFIG_MICROVISOR_FD) &&
++	    !(current->in_execve && (file->f_flags & __FMODE_EXEC)))
++		opener = *profile(file->f_cred);
++
++	return microvisor_access(*profile(current_cred()),
++				 READ_ONCE(*inode_label(file_inode(file))), opener);
++}
++
++static int check_io(struct file *file, int mask)
++{
++	return check_file(file);
++}
++
++static int check_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
++{
++	return check_file(file);
++}
++
++static int check_mmap(struct file *file, unsigned long reqprot,
++		      unsigned long prot, unsigned long flags)
++{
++	return file ? check_file(file) : 0;
++}
++
++#ifdef CONFIG_MICROVISOR_PTRACE
++static u32 task_profile(struct task_struct *task)
++{
++	u32 label;
++
++	rcu_read_lock();
++	label = *profile(__task_cred(task));
++	rcu_read_unlock();
++	return label;
++}
++
++static int check_ptrace(struct task_struct *child, unsigned int mode)
++{
++	return microvisor_access(*profile(current_cred()), 0, task_profile(child));
++}
++
++static int check_traceme(struct task_struct *parent)
++{
++	return microvisor_access(task_profile(parent), 0, *profile(current_cred()));
++}
++#endif
++
++static struct security_hook_list hooks[] __ro_after_init = {
++	LSM_HOOK_INIT(inode_alloc_security, alloc_label),
++	LSM_HOOK_INIT(d_instantiate, load_label),
++	LSM_HOOK_INIT(inode_init_security, inherit_label),
++	LSM_HOOK_INIT(cred_prepare, prepare_profile),
++	LSM_HOOK_INIT(cred_transfer, copy_profile),
++	LSM_HOOK_INIT(bprm_creds_from_file, exec_profile),
++	LSM_HOOK_INIT(inode_permission, check_permission),
++	LSM_HOOK_INIT(inode_getattr, check_getattr),
++	LSM_HOOK_INIT(inode_setattr, check_setattr),
++	LSM_HOOK_INIT(inode_readlink, check_dentry),
++	LSM_HOOK_INIT(inode_follow_link, check_follow),
++	LSM_HOOK_INIT(inode_link, check_link),
++	LSM_HOOK_INIT(inode_unlink, check_entry),
++	LSM_HOOK_INIT(inode_rmdir, check_entry),
++	LSM_HOOK_INIT(inode_rename, check_rename),
++	LSM_HOOK_INIT(inode_getxattr, check_getxattr),
++	LSM_HOOK_INIT(inode_listxattr, check_dentry),
++	LSM_HOOK_INIT(inode_setxattr, check_setxattr),
++	LSM_HOOK_INIT(inode_removexattr, check_removexattr),
++	LSM_HOOK_INIT(inode_get_acl, check_removexattr),
++	LSM_HOOK_INIT(inode_remove_acl, check_removexattr),
++	LSM_HOOK_INIT(inode_set_acl, check_setacl),
++	LSM_HOOK_INIT(file_open, check_file),
++	LSM_HOOK_INIT(file_receive, check_file),
++	LSM_HOOK_INIT(file_permission, check_io),
++	LSM_HOOK_INIT(file_ioctl, check_ioctl),
++	LSM_HOOK_INIT(file_ioctl_compat, check_ioctl),
++	LSM_HOOK_INIT(file_truncate, check_file),
++	LSM_HOOK_INIT(mmap_file, check_mmap),
++#ifdef CONFIG_MICROVISOR_PTRACE
++	LSM_HOOK_INIT(ptrace_access_check, check_ptrace),
++	LSM_HOOK_INIT(ptrace_traceme, check_traceme),
++#endif
++};
++
++static const struct lsm_id microvisor_id = {
++	.name = "microvisor",
++	.id = 0x4d565352, /* Private to this overlay. */
++};
++
++static int __init microvisor_init(void)
++{
++	security_add_hooks(hooks, ARRAY_SIZE(hooks), &microvisor_id);
++	return 0;
++}
++
++DEFINE_LSM(microvisor) = {
++	.blobs = &blobs,
++	.id = &microvisor_id,
++	.init = microvisor_init,
++};
+diff --git a/security/microvisor/policy.rs b/security/microvisor/policy.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..8d4c01ebc4cf7cbad539324a1df2dce2e7daa232
+--- /dev/null
++++ b/security/microvisor/policy.rs
+@@ -0,0 +1,68 @@
++// SPDX-License-Identifier: GPL-2.0-only
++
++//! Credential labels are profile IDs. Inode labels are positive for data,
++//! negative for executables, zero for ordinary files, and MIN for unreadable labels.
++
++use kernel::error::code::EACCES;
++
++// SAFETY: hooks.c passes an initialized buffer of exactly `len` bytes.
++#[unsafe(no_mangle)]
++unsafe extern "C" fn microvisor_decode(value: *const u8, len: usize) -> i32 {
++    // SAFETY: The buffer remains live for this call.
++    let value = unsafe { core::slice::from_raw_parts(value, len) };
++    let (exec, digits) = if let Some(id) = value.strip_prefix(b"exec:") {
++        (true, id)
++    } else if let Some(id) = value.strip_prefix(b"data:") {
++        (false, id)
++    } else {
++        return i32::MIN;
++    };
++    if digits.starts_with(b"0") || !digits.iter().all(u8::is_ascii_digit) {
++        return i32::MIN;
++    }
++    match core::str::from_utf8(digits)
++        .ok()
++        .and_then(|s| s.parse::<i32>().ok())
++    {
++        Some(id) if exec => -id,
++        Some(id) => id,
++        None => i32::MIN,
++    }
++}
++
++// SAFETY: Unique symbol called with credential and inode labels from hooks.c.
++#[unsafe(no_mangle)]
++extern "C" fn microvisor_exec(old: u32, label: i32, trusted: bool, safe_transition: bool) -> i32 {
++    if label == i32::MIN {
++        return EACCES.to_errno();
++    }
++    if label >= 0 {
++        return 0;
++    }
++    let next = -label;
++    if !trusted || (old != next as u32 && !safe_transition) {
++        return EACCES.to_errno();
++    }
++    next
++}
++
++// SAFETY: Unique symbol called by hooks.c; zero target denotes an ordinary credential.
++#[unsafe(no_mangle)]
++extern "C" fn microvisor_access(subject: u32, label: i32, target: u32) -> i32 {
++    if label == i32::MIN
++        || (label > 0 && subject != label as u32)
++        || (target != 0 && subject != target)
++    {
++        return EACCES.to_errno();
++    }
++    0
++}
++
++// SAFETY: Unique symbol; hooks.c supplies the parent and incoming inode labels.
++#[unsafe(no_mangle)]
++extern "C" fn microvisor_insert(directory: i32, incoming: i32) -> i32 {
++    if directory == i32::MIN || (directory > 0 && directory != incoming) {
++        return EACCES.to_errno();
++    }
++    0
++}
