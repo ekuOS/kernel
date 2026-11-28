@@ -57,7 +57,7 @@ ekuos-kernel_src_install() {
 	local build="${WORKDIR}/build/${PN}" out="${WORKDIR}/out/${PN}"
 	local release module moddir
 	read -r release < "${out}/kernel.release" || die
-	[[ ${release} == "${PV}-eku-${PN#linux-eku-}" ]] || die "Unexpected kernel release: ${release}"
+	[[ ${release} == "${PVR}-eku-${PN#linux-eku-}" ]] || die "Unexpected kernel release: ${release}"
 	moddir="${ED}/usr/lib/modules/${release}"
 	# Kbuild lays out the modules and their metadata, and signs the modules
 	# using the same build key. No build tree or private key is installed.

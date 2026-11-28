@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import '../../build.dart' show BuildFailure, Log, Runner;
+import '../revision.dart';
 
 final runner = Runner(Log(noColor: true));
 const flavors = ['se', 'aa'];
@@ -25,7 +26,7 @@ Future<void> deb(
   String flavor,
   String version,
 ) async {
-  final release = '$version-eku-$flavor';
+  final release = kernelRelease(version, flavor);
   final image = 'linux-image-$version-eku';
   final modules = Directory('$root/usr/lib/modules/$release');
   // Debian kmod and initramfs-tools use /lib/modules. On merged-/usr
@@ -35,7 +36,7 @@ Future<void> deb(
   await Directory('$root/usr').delete(recursive: true);
   await write('$root/DEBIAN/control', '''
 Package: $image
-Version: $version-1
+Version: $version-$packageRevision
 Architecture: amd64
 Maintainer: ekuOS <kernel@ekuos.github.io>
 Section: kernel
@@ -65,12 +66,12 @@ done
     await runner.run('chmod', ['755', meta.path]);
     await write('${meta.path}/DEBIAN/control', '''
 Package: linux-image-eku
-Version: $version-1
+Version: $version-$packageRevision
 Architecture: amd64
 Maintainer: ekuOS <kernel@ekuos.github.io>
 Section: kernel
 Priority: optional
-Depends: $image (= $version-1)
+Depends: $image (= $version-$packageRevision)
 Provides: linux-image-generic, linux-image-amd64
 Description: Tracks the ekuOS Linux kernel ($flavor)
 ''');
@@ -91,7 +92,7 @@ Future<void> rpm(
   String flavor,
   String version,
 ) async {
-  final release = '$version-eku-$flavor';
+  final release = kernelRelease(version, flavor);
   final modules = '$root/usr/lib/modules/$release';
   for (final (source, target) in [
     ('vmlinuz-$release', 'vmlinuz'),
@@ -107,7 +108,7 @@ Future<void> rpm(
 %global _build_id_links none
 Name: kernel-eku
 Version: $version
-Release: 1
+Release: $packageRevision
 Summary: Hardened ekuOS Linux kernel ($flavor)
 License: GPL-2.0-only
 BuildArch: x86_64
@@ -153,7 +154,7 @@ Future<void> pacman(
   String flavor,
   String version,
 ) async {
-  final release = '$version-eku-$flavor';
+  final release = kernelRelease(version, flavor);
   final name = 'linux-eku-$flavor';
   final modules = '$root/usr/lib/modules/$release';
   await File('$root/boot/vmlinuz-$release').rename('$modules/vmlinuz');
@@ -162,7 +163,7 @@ Future<void> pacman(
   await write('$root/.PKGINFO', '''
 pkgname = $name
 pkgbase = $name
-pkgver = $version-1
+pkgver = $version-$packageRevision
 pkgdesc = Hardened ekuOS Linux kernel ($flavor)
 url = https://github.com/ekuOS/kernel
 builddate = ${DateTime.now().millisecondsSinceEpoch ~/ 1000}
@@ -192,7 +193,7 @@ depend = mkinitcpio
     '--owner=0',
     '--group=0',
     '-cf',
-    '$output/$name-$version-1-x86_64.pkg.tar.zst',
+    '$output/$name-$version-$packageRevision-x86_64.pkg.tar.zst',
     '-C',
     root,
     '.PKGINFO',

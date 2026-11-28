@@ -14,5 +14,8 @@ dedicated ASCII-armored OpenPGP private key. If protected, set
 
 Pushes to `main` publish after the build and install checks pass. A manual
 run with `publish` unchecked only builds and tests. To change Linux versions,
-update `linux.sha256` and rename both ebuilds. Source builds require Dart at
-`/opt/dart-sdk`; published build inputs are in `distfiles/`.
+update `linux.sha256` and rename both ebuilds. For a package-only release,
+update `packaging/revision.dart`, both ebuild filenames, and `CONFIG_LOCALVERSION`
+in both kernel profiles so older packages retain their own module directories.
+Source builds require Dart at `/opt/dart-sdk`; published build inputs are in
+`distfiles/`.

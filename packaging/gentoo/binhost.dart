@@ -3,6 +3,7 @@ import 'dart:io';
 
 import '../../build.dart' show BuildFailure, Log, Runner;
 import '../../test/verify_kernel.dart' show sameFile;
+import '../revision.dart';
 
 const project = '/input';
 const defaultBinhost = 'amd64/23.0/llvm/systemd';
@@ -60,7 +61,8 @@ Future<void> write(String path, String text) async {
 Future<void> prepareSources(String version) async {
   await Directory(distfiles).create(recursive: true);
   final linux = 'linux-$version.tar.xz';
-  final tooling = 'ekuos-kernel-$version';
+  final pvr = '$version-$gentooRevision';
+  final tooling = 'ekuos-kernel-$pvr';
   await runner.run('curl', [
     '--fail',
     '--location',
@@ -117,8 +119,8 @@ Future<void> prepareSources(String version) async {
   for (final flavor in flavors) {
     final path = '$overlay/sys-kernel/linux-eku-$flavor';
     check(
-      await File('$path/linux-eku-$flavor-$version.ebuild').exists(),
-      'Missing linux-eku-$flavor-$version ebuild',
+      await File('$path/linux-eku-$flavor-$pvr.ebuild').exists(),
+      'Missing linux-eku-$flavor-$pvr ebuild',
     );
     await write('$path/Manifest', manifest);
   }
@@ -143,7 +145,7 @@ Future<void> emerge(List<String> args, Map<String, String> env) async {
 }
 
 Future<void> verifyInstalled(String version, String flavor) async {
-  final release = '$version-eku-$flavor';
+  final release = kernelRelease(version, flavor);
   final modules = '/usr/lib/modules/$release';
   final reference = '/var/tmp/ekuos-verified-$flavor';
   for (final (source, target) in [
@@ -210,7 +212,7 @@ Future<void> verifyInstalled(String version, String flavor) async {
 }
 
 Future<void> exportNativePayload(String version, String flavor) async {
-  final release = '$version-eku-$flavor';
+  final release = kernelRelease(version, flavor);
   await runner.run('tar', [
     '-C',
     '/',
@@ -230,8 +232,9 @@ Future<void> build(String version) async {
         await capture('portageq', ['envvar', 'CHOST']) == 'x86_64-pc-linux-gnu',
     'Gentoo stage profile or CHOST does not match the binhost',
   );
+  final pvr = '$version-$gentooRevision';
   final atoms = [
-    for (final flavor in flavors) '=sys-kernel/linux-eku-$flavor-$version',
+    for (final flavor in flavors) '=sys-kernel/linux-eku-$flavor-$pvr',
   ];
   await prepareSources(version);
   await write(
@@ -266,10 +269,10 @@ Future<void> build(String version) async {
   check(rootPath != null, 'Cannot read Gentoo toolchain PATH');
   env['PATH'] = rootPath!;
   for (final flavor in flavors) {
-    final atom = '=sys-kernel/linux-eku-$flavor-$version';
+    final atom = '=sys-kernel/linux-eku-$flavor-$pvr';
     await emerge(['--buildpkgonly', atom], env);
     // Preserve an independent copy across Portage build-directory cleanup.
-    final work = '/var/tmp/portage/sys-kernel/linux-eku-$flavor-$version/work';
+    final work = '/var/tmp/portage/sys-kernel/linux-eku-$flavor-$pvr/work';
     final source = '$work/out/linux-eku-$flavor';
     final reference = '/var/tmp/ekuos-verified-$flavor';
     await Directory(reference).create();
@@ -292,7 +295,7 @@ Future<void> build(String version) async {
     if (await Directory('/native-output').exists()) {
       await exportNativePayload(version, flavor);
     }
-    stdout.writeln('Verified installed linux-eku-$flavor-$version');
+    stdout.writeln('Verified installed linux-eku-$flavor-$pvr');
   }
 }
 
@@ -334,6 +337,7 @@ Future<void> importSigningKey(Directory home) async {
 }
 
 Future<void> sign(String version) async {
+  final pvr = '$version-$gentooRevision';
   final scratch = await Directory.systemTemp.createTemp('ekuos-signing-');
   final signHome = Directory('${scratch.path}/sign');
   final verifyHome = '${scratch.path}/verify';
@@ -395,7 +399,7 @@ Future<void> sign(String version) async {
           .where(
             (f) =>
                 f is File &&
-                RegExp('^$pn-${RegExp.escape(version)}-\\d+\\.gpkg\\.tar\$')
+                RegExp('^$pn-${RegExp.escape(pvr)}-\\d+\\.gpkg\\.tar\$')
                     .hasMatch(f.uri.pathSegments.last),
           )
           .toList();
@@ -428,7 +432,7 @@ Future<void> sign(String version) async {
     );
     for (var i = 0; i < flavors.length; i++) {
       final fields = [
-        'CPV: sys-kernel/linux-eku-${flavors[i]}-$version',
+        'CPV: sys-kernel/linux-eku-${flavors[i]}-$pvr',
         'SLOT: $version',
         'REPO: ekuos-kernel',
         'PATH: ${paths[i]}',
@@ -444,7 +448,7 @@ Future<void> sign(String version) async {
       'Packages.gz',
       'overlay.tar.gz',
       'distfiles/linux-$version.tar.xz',
-      'distfiles/ekuos-kernel-$version.tar.gz',
+      'distfiles/ekuos-kernel-$pvr.tar.gz',
       ...paths,
     ], workingDirectory: output);
     check(

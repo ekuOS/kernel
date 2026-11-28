@@ -360,7 +360,7 @@ fail:
             File('$destination/$package/.config'),
           );
           check(
-            values['CONFIG_LOCALVERSION'] == '"-eku-$flavor"',
+            values['CONFIG_LOCALVERSION'] == '"-r1-eku-$flavor"',
             'Release names collide',
           );
           check(

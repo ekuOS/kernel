@@ -106,7 +106,9 @@ Future<void> main(List<String> args) async {
       );
       final lsm = (jsonDecode(actual['CONFIG_LSM']!) as String).split(',');
       check(
-        actual['CONFIG_LOCALVERSION'] == '"-eku-$flavor"' &&
+        (jsonDecode(actual['CONFIG_LOCALVERSION']!) as String).endsWith(
+              '-eku-$flavor',
+            ) &&
             actual['CONFIG_SECURITY_SELINUX'] == (flavor == 'se' ? 'y' : 'n') &&
             actual['CONFIG_SECURITY_APPARMOR'] ==
                 (flavor == 'aa' ? 'y' : 'n') &&
