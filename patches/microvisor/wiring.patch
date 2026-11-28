@@ -1,0 +1,81 @@
+Register the Microvisor LSM in Linux 7.3.6. The source files come from
+the upstream checkout pinned in build.dart.
+
+diff --git a/include/linux/args.h b/include/linux/args.h
+index 0562dc51435e2dc1930f74ea435abd853f755cd6..169dccf096f245e4523135f5766d5ca981fae037 100644
+--- a/include/linux/args.h
++++ b/include/linux/args.h
+@@ -6,9 +6,9 @@
+ /*
+  * How do these macros work?
+  *
+- * In __COUNT_ARGS() _0 to _15 are just placeholders from the start
++ * In __COUNT_ARGS() _0 to _16 are just placeholders from the start
+  * in order to make sure _n is positioned over the correct number
+- * from 15 to 0 (depending on X, which is a variadic argument list).
++ * from 16 to 0 (depending on X, which is a variadic argument list).
+  * They serve no purpose other than occupying a position. Since each
+  * macro parameter must have a distinct identifier, those identifiers
+  * are as good as any.
+@@ -17,9 +17,9 @@
+  * that as _n.
+  */
+ 
+-/* This counts to 15. Any more, it will return 16th argument. */
+-#define __COUNT_ARGS(_0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _n, X...) _n
+-#define COUNT_ARGS(X...) __COUNT_ARGS(, ##X, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
++/* This counts to 16. Any more, it will return 17th argument. */
++#define __COUNT_ARGS(_0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _n, X...) _n
++#define COUNT_ARGS(X...) __COUNT_ARGS(, ##X, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
+ 
+ /* Concatenate two parameters, but allow them to be expanded beforehand. */
+ #define __CONCAT(a, b) a ## b
+diff --git a/include/linux/lsm_count.h b/include/linux/lsm_count.h
+index 16eb49761b253e64e4fc72cdc99eb7381c0c07e9..5b211014d171d734f1578cb97def2d8b9b1183e9 100644
+--- a/include/linux/lsm_count.h
++++ b/include/linux/lsm_count.h
+@@ -96,6 +96,12 @@
+ #define EVM_ENABLED
+ #endif
+ 
++#if IS_ENABLED(CONFIG_SECURITY_MICROVISOR)
++#define MICROVISOR_ENABLED 1,
++#else
++#define MICROVISOR_ENABLED
++#endif
++
+ #if IS_ENABLED(CONFIG_SECURITY_IPE)
+ #define IPE_ENABLED 1,
+ #else
+@@ -124,6 +130,7 @@
+ 		LANDLOCK_ENABLED	\
+ 		IMA_ENABLED		\
+ 		EVM_ENABLED		\
++		MICROVISOR_ENABLED	\
+ 		IPE_ENABLED)
+ 
+ #else
+diff --git a/security/Kconfig b/security/Kconfig
+index f7bf6cdc6229ebaf41fc72dcad22487ee626a513..ffbbe2a126459dad178ff258ad3fff898081bad9 100644
+--- a/security/Kconfig
++++ b/security/Kconfig
+@@ -227,6 +227,7 @@ source "security/yama/Kconfig"
+ source "security/safesetid/Kconfig"
+ source "security/lockdown/Kconfig"
+ source "security/landlock/Kconfig"
++source "security/microvisor/Kconfig"
+ source "security/ipe/Kconfig"
+ 
+ source "security/integrity/Kconfig"
+diff --git a/security/Makefile b/security/Makefile
+index 4601230ba442a1bcedc3f999b74a7796ac72894d..5c7f6ccfb18b945bd59140ea72faaca1003e5e47 100644
+--- a/security/Makefile
++++ b/security/Makefile
+@@ -25,6 +25,7 @@ obj-$(CONFIG_SECURITY_LOCKDOWN_LSM)	+= lockdown/
+ obj-$(CONFIG_CGROUPS)			+= device_cgroup.o
+ obj-$(CONFIG_BPF_LSM)			+= bpf/
+ obj-$(CONFIG_SECURITY_LANDLOCK)		+= landlock/
++obj-$(CONFIG_SECURITY_MICROVISOR)	+= microvisor/
+ obj-$(CONFIG_SECURITY_IPE)		+= ipe/
+ 
+ # Object integrity file lists

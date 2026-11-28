@@ -1,7 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
-import '../../build.dart' show BuildFailure, Log, Runner;
+import '../../build.dart'
+    show BuildFailure, Log, Runner, microvisorRepository, microvisorRevision;
 import '../../test/verify_kernel.dart' show sameFile;
 
 const project = '/input';
@@ -94,6 +95,31 @@ Future<void> prepareSources(String version) async {
     ]);
     await File('$project/test/verify_kernel.dart')
         .copy('$root/test/verify_kernel.dart');
+    // Portage's compile phase has no network access. Ship the pinned Git
+    // commit so the builder can clone it inside the sandbox.
+    final microvisor = '${staging.path}/microvisor';
+    await runner.run('git', [
+      'clone',
+      '--no-checkout',
+      '--',
+      microvisorRepository,
+      microvisor,
+    ]);
+    await runner.run('git', [
+      '-C',
+      microvisor,
+      'branch',
+      'ekuos-build',
+      microvisorRevision,
+    ]);
+    await runner.run('git', [
+      '-C',
+      microvisor,
+      'bundle',
+      'create',
+      '$root/microvisor.bundle',
+      'ekuos-build',
+    ]);
     await runner.run('tar', [
       '-C',
       staging.path,

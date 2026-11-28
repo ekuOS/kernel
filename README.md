@@ -36,10 +36,11 @@ dart run build.dart clean --dry-run  # Preview cleanup; --keep-source preserves 
 
 A missing source tree is cloned from the latest stable Linux tag by default.
 Existing source trees are reused; patches in `patches/` are applied in filename
-order. The Microvisor patch targets Linux 7.3.6; use `--source` to choose a
-fresh directory if an existing source tree is on a different version. The
-builder exports the kernel image, config and signed modules; it does not
-install them or change the bootloader.
+order. When Microvisor is enabled, the builder first clones its upstream
+repository and merges the source from a pinned commit. The integration targets
+Linux 7.3.6; use `--source` to choose a fresh directory if an existing source
+tree is on a different version. The builder exports the kernel image, config
+and signed modules; it does not install them or change the bootloader.
 
 ## Binary packages
 

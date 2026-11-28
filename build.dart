@@ -479,38 +479,87 @@ Future<void> applyPatches(
   patches.sort((a, b) => a.path.compareTo(b.path));
   if (patches.isEmpty)
     runner.log.warn('No .patch or .diff files in ${directory.path}');
-  for (final patch in patches) {
-    final args = [
-      '--batch',
-      '--fuzz=0',
-      '-p1',
-      '--reject-file=-',
-      '-i',
-      patch.absolute.path,
-    ];
-    final check = await Process.run('patch', [
+  for (final patch in patches.cast<File>()) {
+    await applyPatch(patch, source, runner);
+  }
+}
+
+Future<void> applyPatch(File patch, String source, Runner runner) async {
+  final args = [
+    '--batch',
+    '--fuzz=0',
+    '-p1',
+    '--reject-file=-',
+    '-i',
+    patch.absolute.path,
+  ];
+  final check = await Process.run('patch', [
+    ...args,
+    '--forward',
+    '--dry-run',
+  ], workingDirectory: source);
+  if (check.exitCode != 0) {
+    final reverse = await Process.run('patch', [
       ...args,
-      '--forward',
+      '--reverse',
+      '--force',
       '--dry-run',
     ], workingDirectory: source);
-    if (check.exitCode != 0) {
-      final reverse = await Process.run('patch', [
-        ...args,
-        '--reverse',
-        '--force',
-        '--dry-run',
-      ], workingDirectory: source);
-      if (reverse.exitCode == 0) {
-        runner.log.warn('Already applied: ${patch.path}');
-        continue;
-      }
-      throw BuildFailure(
-        'Patch check failed: ${patch.path}\n'
-        '${check.stdout}${check.stderr}',
-      );
+    if (reverse.exitCode == 0) {
+      runner.log.warn('Already applied: ${patch.path}');
+      return;
     }
-    await runner.run('patch', [...args, '--forward'], cwd: source);
-    runner.log.ok('Applied: ${patch.path}');
+    throw BuildFailure(
+      'Patch check failed: ${patch.path}\n'
+      '${check.stdout}${check.stderr}',
+    );
+  }
+  await runner.run('patch', [...args, '--forward'], cwd: source);
+  runner.log.ok('Applied: ${patch.path}');
+}
+
+const microvisorRepository = 'https://github.com/ekuOS/microvisor-lsm.git';
+const microvisorRevision = '755fbc48f36cec286316391f1e4b277b909beab5';
+
+Future<void> mergeMicrovisor(String source, Runner runner) async {
+  final scratch = await Directory.systemTemp.createTemp('ekuos-microvisor-');
+  try {
+    final checkout = '${scratch.path}/upstream';
+    // Gentoo source builds use the Git bundle shipped in the tooling distfile.
+    final bundle = File.fromUri(Platform.script.resolve('microvisor.bundle'));
+    await runner.run('git', [
+      'clone',
+      '--no-checkout',
+      '--',
+      await bundle.exists() ? bundle.path : microvisorRepository,
+      checkout,
+    ]);
+    await runner.run('git', [
+      'checkout',
+      '--detach',
+      microvisorRevision,
+    ], cwd: checkout);
+
+    final wiring = File.fromUri(
+      Platform.script.resolve('patches/microvisor/wiring.patch'),
+    );
+    final overlay = StringBuffer(await wiring.readAsString());
+    for (final name in ['Kconfig', 'Makefile', 'hooks.c', 'policy.rs']) {
+      final path = 'security/microvisor/$name';
+      final lines = await File('$checkout/linux/$path').readAsLines();
+      overlay.writeln('--- /dev/null');
+      overlay.writeln('+++ b/$path');
+      overlay.writeln('@@ -0,0 +1,${lines.length} @@');
+      for (final line in lines) {
+        overlay.writeln('+$line');
+      }
+    }
+    // Check the wiring and new files together before changing the source tree.
+    final patch = await File('${scratch.path}/microvisor.patch')
+        .writeAsString(overlay.toString());
+    await applyPatch(patch, source, runner);
+  } finally {
+    await scratch.delete(recursive: true);
   }
 }
 
@@ -707,6 +756,11 @@ Future<void> build(Options options, Log log) async {
   final runner = Runner(log);
   await prepareSource(options, runner);
   final sourcePath = await Directory(options.source).resolveSymbolicLinks();
+  if (profiles.values.any(
+    (profile) => profile.overrides['CONFIG_SECURITY_MICROVISOR'] == 'y',
+  )) {
+    await mergeMicrovisor(sourcePath, runner);
+  }
   await applyPatches(patches, sourcePath, runner);
   // Each flavor uses all requested CPUs in turn, with independent O= trees.
   for (final entry in profiles.entries) {
