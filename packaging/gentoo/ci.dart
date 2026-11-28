@@ -1,11 +1,40 @@
 import 'dart:io';
 
-import '../../build.dart' show BuildFailure;
+import '../../build.dart'
+    show BuildFailure, Log, Runner, microvisorRepository, microvisorRevision;
 
 String requiredEnv(String name) {
   final value = Platform.environment[name];
   if (value == null || value.isEmpty) throw BuildFailure('Missing $name');
   return value;
+}
+
+Future<void> makeMicrovisorBundle(String bundle) async {
+  final runner = Runner(Log(noColor: true));
+  final scratch = await Directory.systemTemp.createTemp('ekuos-microvisor-');
+  try {
+    final checkout = '${scratch.path}/upstream';
+    await runner.run('git', [
+      'clone',
+      '--no-checkout',
+      '--',
+      microvisorRepository,
+      checkout,
+    ]);
+    await runner.run('git', [
+      'update-ref',
+      'refs/heads/ekuos-build',
+      microvisorRevision,
+    ], cwd: checkout);
+    await runner.run('git', [
+      'bundle',
+      'create',
+      bundle,
+      'refs/heads/ekuos-build',
+    ], cwd: checkout);
+  } finally {
+    await scratch.delete(recursive: true);
+  }
 }
 
 Future<void> runContainer({required bool sign}) async {
@@ -14,6 +43,7 @@ Future<void> runContainer({required bool sign}) async {
   final output = Directory('$temp/binhost');
   final dart = await File(Platform.resolvedExecutable).resolveSymbolicLinks();
   final sdk = File(dart).parent.parent.path;
+  final bundle = '$temp/microvisor.bundle';
   final args = [
     'run',
     '--rm',
@@ -26,7 +56,12 @@ Future<void> runContainer({required bool sign}) async {
     '${output.path}:/output',
     '-v',
     '$temp/ekuos-binhost:/usr/local/bin/ekuos-binhost:ro',
-    if (!sign) ...['-v', '$sdk:/opt/dart-sdk:ro'],
+    if (!sign) ...[
+      '-v',
+      '$sdk:/opt/dart-sdk:ro',
+      '-v',
+      '$bundle:/microvisor.bundle:ro',
+    ],
     if (!sign && Platform.environment['EXPORT_NATIVE_PAYLOAD'] == 'true') ...[
       '-v',
       '$temp/native-input:/native-output',
@@ -36,6 +71,8 @@ Future<void> runContainer({required bool sign}) async {
     sign ? 'sign' : 'build',
   ];
   if (!sign) {
+    // The stage image only gets Git after Portage installs build dependencies.
+    await makeMicrovisorBundle(bundle);
     await output.create();
     if (Platform.environment['EXPORT_NATIVE_PAYLOAD'] == 'true') {
       await Directory('$temp/native-input').create();
